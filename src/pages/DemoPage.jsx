@@ -1,8 +1,7 @@
 
-import { Download } from 'lucide-react'
+import { ArrowRight, Download, UploadCloud } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
 import { Button } from '../components/Button.jsx'
-import { EmptyState } from '../components/EmptyState.jsx'
 import { PageHeader } from '../components/PageHeader.jsx'
 import { APP_PAGES } from '../constants.js'
 import { triggerWorkbookDownload } from '../utils/excel.js'
@@ -21,6 +20,7 @@ const UploadGuide = ({ isDragging }) => (
       isDragging ? 'border-indigo-400 bg-indigo-50 text-indigo-600' : 'border-slate-300 bg-white/70 text-slate-500'
     } px-6 py-10 text-center transition`}
   >
+    <UploadCloud aria-hidden className="h-10 w-10 text-indigo-500" />
     <div className="space-y-2">
       <p className="text-sm font-semibold uppercase tracking-[0.3em]">Upload workbook</p>
       <p className="text-sm leading-relaxed">
@@ -33,11 +33,12 @@ const UploadGuide = ({ isDragging }) => (
 
 export const DemoPage = ({
   loadFromFile,
-  isLoading,
   error,
   metadata,
   hasInventory,
+  hasImported,
   generateTemplateBytes,
+  generateBlankTemplateBytes,
   navigate,
 }) => {
   const [statusMessage, setStatusMessage] = useState('')
@@ -64,7 +65,12 @@ export const DemoPage = ({
 
   const handleTemplateDownload = () => {
     const bytes = generateTemplateBytes()
-    triggerWorkbookDownload(bytes, 'jacquelines-stocktake-template.xlsx')
+    triggerWorkbookDownload(bytes, 'stocktake-template.xlsx')
+  }
+
+  const handleBlankTemplateDownload = () => {
+    const bytes = generateBlankTemplateBytes()
+    triggerWorkbookDownload(bytes, 'stocktake-template-blank.xlsx')
   }
 
   const handleFiles = async (files) => {
@@ -100,24 +106,36 @@ export const DemoPage = ({
   }
 
   const readyMessage = hasInventory
-    ? 'Great! Your inventory is loaded. Jump into Stocktake to record the new counts.'
-    : 'Once you import a workbook we will unlock the Stocktake, History and Insights views.'
+    ? 'Inventory data is ready. Proceed to Stocktake to capture the latest movements.'
+    : hasImported
+      ? 'Workbook imported. Register items on the Stocktake page to begin tracking.'
+      : 'Import a workbook to enable Stocktake, History, and Analytics views.'
 
   return (
     <div className="space-y-10">
       <PageHeader
         eyebrow="Welcome"
-        title="Jacqueline's Trash Accounting"
-        description="Bring order to messy stocktakes. Import your Excel workbook, capture this round of counts, and export an audit-friendly file with history and insights."
+        title="Stocktake Inventory Tool"
+        description="Import a validated workbook, prepare your stocktake, and export auditable results with full traceability."
         actions={
-          <Button
-            variant="secondary"
-            onClick={handleTemplateDownload}
-            iconPosition="right"
-            icon={<Download aria-hidden className="h-4 w-4" />}
-          >
-            Download template
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="secondary"
+              onClick={handleTemplateDownload}
+              iconPosition="right"
+              icon={<Download aria-hidden className="h-4 w-4" />}
+            >
+              Template workbook
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={handleBlankTemplateDownload}
+              iconPosition="right"
+              icon={<Download aria-hidden className="h-4 w-4" />}
+            >
+              Blank workbook
+            </Button>
+          </div>
         }
       />
 
@@ -193,16 +211,10 @@ export const DemoPage = ({
           <div className="flex flex-wrap gap-2">
             <Button
               variant="primary"
-              onClick={handleTemplateDownload}
-              iconPosition="right"
-              icon={<Download aria-hidden className="h-4 w-4" />}
-            >
-              Template workbook
-            </Button>
-            <Button
-              variant="ghost"
               onClick={() => navigate?.(APP_PAGES[1].id)}
-              disabled={!hasInventory}
+              disabled={!hasImported}
+              iconPosition="right"
+              icon={<ArrowRight aria-hidden className="h-4 w-4" />}
             >
               Go to Stocktake
             </Button>
@@ -210,17 +222,6 @@ export const DemoPage = ({
         </aside>
       </section>
 
-      {hasInventory ? null : (
-        <EmptyState
-          title="Waiting for your workbook"
-          message="Import your existing stocktake to unlock real-time updates, history tracking, and insights."
-          action={
-            <Button onClick={() => fileInputRef.current?.click()} isLoading={isLoading}>
-              Upload workbook
-            </Button>
-          }
-        />
-      )}
     </div>
   )
 }

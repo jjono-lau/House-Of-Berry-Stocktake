@@ -4,6 +4,7 @@ import {
   EXCEL_MIME_TYPE,
   EXCEL_SHEET_NAME,
   HISTORY_SHEET_NAME,
+  TEMPLATE_HEADERS,
   REQUIRED_COLUMNS,
   SUMMARY_SHEET_NAME,
 } from '../constants.js'
@@ -126,11 +127,26 @@ export const createTemplateWorkbook = () => {
   return XLSX.write(workbook, { bookType: 'xlsx', type: 'array', cellDates: true })
 }
 
+export const createBlankTemplateWorkbook = () => {
+  const workbook = XLSX.utils.book_new()
+  const worksheet = XLSX.utils.aoa_to_sheet([TEMPLATE_HEADERS])
+  worksheet['!cols'] = [
+    { wch: 14 },
+    { wch: 26 },
+    { wch: 18 },
+    { wch: 12 },
+    { wch: 14 },
+    { wch: 16 },
+  ]
+  XLSX.utils.book_append_sheet(workbook, worksheet, EXCEL_SHEET_NAME)
+  return XLSX.write(workbook, { bookType: 'xlsx', type: 'array', cellDates: true })
+}
+
 const createSummarySheet = (inventory, metadata = {}) => {
   const totalUnits = inventory.reduce((acc, item) => acc + item.currentCount, 0)
   const totalValue = inventory.reduce((acc, item) => acc + item.currentCount * item.unitCost, 0)
   const summaryRows = [
-    ['Jacqueline\'s Trash Accounting'],
+    ['Stocktake Inventory Tool'],
     ['Generated At', new Date()],
     ['Source File', metadata.sourceFileName || ''],
     ['Imported At', metadata.lastImportedAt ? new Date(metadata.lastImportedAt) : ''],

@@ -1,23 +1,23 @@
-﻿export const APP_PAGES = [
+export const APP_PAGES = [
   {
     id: 'demo',
-    label: 'Demo',
-    tagline: 'Import your workbook & get the template',
+    label: 'Getting Started',
+    tagline: 'Import your workbook and download the template',
   },
   {
     id: 'stocktake',
     label: 'Stocktake',
-    tagline: 'Capture this round of counts',
+    tagline: 'Record sold and received quantities',
   },
   {
     id: 'history',
     label: 'History',
-    tagline: 'See every adjustment made',
+    tagline: 'Review every adjustment completed',
   },
   {
     id: 'stats',
-    label: 'Insights',
-    tagline: 'How your stock is moving',
+    label: 'Analytics',
+    tagline: 'Monitor stock performance trends',
   },
 ]
 
@@ -41,9 +41,9 @@ export const TEMPLATE_HEADERS = [
 
 export const DEFAULT_TEMPLATE_ROWS = [
   TEMPLATE_HEADERS,
-  ['DEMO-001', 'Shampoo', 'Bath', 120, 6.5, '2025-01-01'],
-  ['DEMO-002', 'Conditioner', 'Bath', 85, 6.5, '2025-01-01'],
-  ['DEMO-003', 'Soap Bar', 'Bath', 220, 2.5, '2025-01-01'],
+  ['SAMPLE-001', 'Sample Item A', 'Category A', 120, 6.5, '2025-01-01'],
+  ['SAMPLE-002', 'Sample Item B', 'Category B', 85, 12.4, '2025-01-01'],
+  ['SAMPLE-003', 'Sample Item C', 'Category C', 220, 5.2, '2025-01-01'],
 ]
 
 export const EXCEL_SHEET_NAME = 'Stocktake'

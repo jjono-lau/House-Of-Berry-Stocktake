@@ -1,10 +1,11 @@
-﻿import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import {
   AUTO_SKU_PAD_LENGTH,
   AUTO_SKU_PREFIX,
   MOVEMENT_WINDOW_DAYS,
 } from '../constants.js'
 import {
+  createBlankTemplateWorkbook,
   createTemplateWorkbook,
   createUpdatedWorkbook,
   parseInventoryWorkbook,
@@ -139,15 +140,16 @@ export const useInventory = () => {
 
   const applyStocktake = useCallback((meta = {}) => {
     const timestamp = new Date().toISOString()
-    const pendingHistory = []
-    setInventory((prev) =>
-      prev.map((item) => {
+    let computedHistory = []
+    setInventory((prev) => {
+      const historyEntries = []
+      const nextInventory = prev.map((item) => {
         const sold = parseAdjustment(item.draftSold)
         const received = parseAdjustment(item.draftReceived)
         const nextCount = item.currentCount - sold + received
         const historyEntry = buildHistoryEntry(item, sold, received, nextCount, timestamp, meta)
         if (historyEntry) {
-          pendingHistory.push(historyEntry)
+          historyEntries.push(historyEntry)
         }
         return {
           ...item,
@@ -157,13 +159,15 @@ export const useInventory = () => {
           draftReceived: '',
           lastUpdated: historyEntry ? timestamp : item.lastUpdated,
         }
-      }),
-    )
-    if (pendingHistory.length) {
-      setHistory((prev) => [...pendingHistory, ...prev])
+      })
+      computedHistory = historyEntries
+      return nextInventory
+    })
+    if (computedHistory.length) {
+      setHistory((prev) => [...computedHistory, ...prev])
       setMetadata((prev) => ({ ...prev, lastStocktakeAt: timestamp }))
     }
-    return pendingHistory
+    return computedHistory
   }, [])
 
   const clearInventory = useCallback(() => {
@@ -228,6 +232,7 @@ export const useInventory = () => {
   }, [metadata.nextSkuNumber])
 
   const hasInventory = inventory.length > 0
+  const hasImported = Boolean(metadata.sourceFileName)
   const hasDrafts = useMemo(
     () => inventory.some((item) => parseAdjustment(item.draftSold) > 0 || parseAdjustment(item.draftReceived) > 0),
     [inventory],
@@ -277,6 +282,7 @@ export const useInventory = () => {
     })
   }, [history])
 
+  const generateBlankTemplateBytes = useCallback(() => createBlankTemplateWorkbook(), [])
   const generateTemplateBytes = useCallback(() => createTemplateWorkbook(), [])
 
   const exportWorkbookBytes = useCallback(
@@ -292,6 +298,7 @@ export const useInventory = () => {
     draftSummary,
     recentMovements,
     hasInventory,
+    hasImported,
     hasDrafts,
     isLoading,
     error,
@@ -301,6 +308,7 @@ export const useInventory = () => {
     applyStocktake,
     clearInventory,
     addManualItem,
+    generateBlankTemplateBytes,
     generateTemplateBytes,
     exportWorkbookBytes,
   }

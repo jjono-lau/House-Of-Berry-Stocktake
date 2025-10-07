@@ -15,7 +15,7 @@ const PAGE_COMPONENTS = {
   stats: StatsPage,
 }
 
-const BRAND_NAME = "Jacqueline's Trash Accounting"
+const BRAND_NAME = 'Stocktake Inventory Tool'
 
 export default function App() {
   const inventoryApi = useInventory()
@@ -59,12 +59,12 @@ export default function App() {
             <div className="inline-flex items-center gap-2 rounded-full border border-indigo-100 bg-white/80 px-3 py-1 text-xs font-semibold uppercase tracking-[0.3em] text-indigo-500 shadow-sm">
               <span>Inventory</span>
               <Dot aria-hidden className="h-3 w-3 text-indigo-400" strokeWidth={3} />
-              <span>Toolkit</span>
+              <span>Platform</span>
             </div>
             <div className="space-y-2">
               <h1 className="text-3xl font-semibold tracking-tight text-slate-900 sm:text-4xl">{BRAND_NAME}</h1>
               <p className="max-w-2xl text-sm leading-relaxed text-slate-600">
-                Import your workbook, capture the latest stocktake, and export clean audit trails with insights on how stock moves.
+                Import your workbook, record stock movements, and export audit-ready reports with operational insights.
               </p>
             </div>
           </div>
@@ -102,7 +102,7 @@ export default function App() {
         </main>
 
         <footer className="mt-16 border-t border-white/60 pt-6 text-xs text-slate-500">
-          <p>Built to fix "organised" chaos. All processing stays on your device.</p>
+          <p>Processing remains on your device. Inventory data is never transmitted externally.</p>
         </footer>
       </div>
     </div>

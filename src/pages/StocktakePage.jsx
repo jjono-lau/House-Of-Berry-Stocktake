@@ -118,7 +118,7 @@ const ManualItemForm = ({ onSubmit, nextSku }) => {
       </label>
       <div className="flex flex-wrap justify-end gap-3">
         <Button type="submit" variant="primary">
-          Add to stock
+          Register item
         </Button>
       </div>
     </form>
@@ -128,6 +128,7 @@ const ManualItemForm = ({ onSubmit, nextSku }) => {
 export const StocktakePage = ({
   inventory,
   hasInventory,
+  hasImported,
   hasDrafts,
   updateDraftAdjustment,
   resetDrafts,
@@ -168,7 +169,7 @@ export const StocktakePage = ({
       ? metadata.sourceFileName.replace(/\.xlsx?$/i, '')
       : 'jacquelines-stocktake'
     triggerWorkbookDownload(bytes, `${fileName}-updated.xlsx`)
-    setStatus('Exported the updated workbook with movements and summary sheets.')
+    setStatus('Generated the latest workbook, including movement history and summary tabs.')
   }
 
   const handleApply = () => {
@@ -176,7 +177,7 @@ export const StocktakePage = ({
     if (historyEntries.length) {
       setStatus(`Recorded ${historyEntries.length} adjustments.`)
     } else {
-      setStatus('No adjustments detected. Enter sold or received units before applying.')
+      setStatus('No adjustments were detected. Capture sold or received units before committing.')
     }
     setPerformedBy('')
     setNotes('')
@@ -184,22 +185,20 @@ export const StocktakePage = ({
 
   const handleManualAdd = (form) => {
     const newItem = addManualItem(form)
-    setManualStatus(`Added ${newItem.name} (${newItem.sku}) to inventory.`)
+    setManualStatus(`Registered ${newItem.name} (${newItem.sku}) in the inventory register.`)
     setStatus('')
   }
 
   const netUnits = draftSummary.received - draftSummary.sold
-  const draftBanner = draftSummary?.items
-    ? `Ready to apply ${draftSummary.items} updates: sold ${formatNumber(draftSummary.sold)} units, received ${formatNumber(draftSummary.received)} units (net ${formatDelta(netUnits, {
-        showZero: true,
-      })}, ${formatDelta(draftSummary.value, { currency: true, showZero: true })}).`
+  const draftBanner = draftSummary?.items > 0
+    ? `Pending adjustments: ${draftSummary.items} lines - sold ${formatNumber(draftSummary.sold)} units, received ${formatNumber(draftSummary.received)} units (net ${formatDelta(netUnits, { showZero: true })}, ${formatDelta(draftSummary.value, { currency: true, showZero: true })}).`
     : null
 
-  if (!hasInventory) {
+  if (!hasImported) {
     return (
       <EmptyState
-        title="Import a workbook to start your stocktake"
-        message="Upload your existing stocktake so we can stage new counts, track adjustments, and export an audit-ready workbook."
+        title="Import a workbook to initialise your stocktake"
+        message="Upload your current stocktake to stage adjustments, maintain an audit trail, and export reconciled results."
       />
     )
   }
@@ -208,15 +207,15 @@ export const StocktakePage = ({
     <div className="space-y-10">
       <PageHeader
         eyebrow="Stocktake"
-        title="Capture this round of counts"
-        description="Record sold and received units for each SKU, then apply changes when you are ready."
+        title="Perform stocktake adjustments"
+        description="Record sold and received quantities for each SKU, then confirm the updates when ready."
         actions={
           <div className="flex flex-wrap gap-2">
             <Button variant="ghost" onClick={resetDrafts}>
-              Clear drafts
+              Clear entries
             </Button>
             <Button variant="primary" onClick={handleApply} disabled={!hasDrafts}>
-              Apply changes
+              Commit updates
             </Button>
             <Button variant="secondary" onClick={handleExport}>
               Export workbook
@@ -224,6 +223,11 @@ export const StocktakePage = ({
           </div>
         }
       />
+      {!hasInventory ? (
+        <p className="rounded-2xl border border-slate-200 bg-white px-6 py-3 text-sm text-slate-600">
+          No inventory records are currently loaded. Register items below to establish opening balances.
+        </p>
+      ) : null}
 
       <section className="grid gap-6 lg:grid-cols-4">
         <MetricCard label="Total SKUs" value={formatNumber(totals.totalSkus)} />
@@ -294,7 +298,7 @@ export const StocktakePage = ({
                 <th className="px-4 py-3 text-left">Current</th>
                 <th className="px-4 py-3 text-left">Sold</th>
                 <th className="px-4 py-3 text-left">Received</th>
-                <th className="px-4 py-3 text-left">? Units</th>
+                <th className="px-4 py-3 text-left">Variance (units)</th>
                 <th className="px-4 py-3 text-left">Value impact</th>
                 <th className="px-4 py-3 text-left">Last updated</th>
               </tr>
@@ -313,7 +317,7 @@ export const StocktakePage = ({
                       <div className="space-y-1">
                         <p className="font-medium text-slate-800">{item.name}</p>
                         <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                          {item.sku || 'No SKU'} · {item.category || 'Uncategorised'}
+                          {item.sku || 'No SKU'} | {item.category || 'Uncategorised'}
                         </p>
                       </div>
                     </td>
@@ -352,6 +356,13 @@ export const StocktakePage = ({
                   </tr>
                 )
               })}
+              {!filteredInventory.length ? (
+                <tr>
+                  <td colSpan={7} className="px-4 py-6 text-center text-sm text-slate-500">
+                    No inventory records available. Register items below to begin tracking.
+                  </td>
+                </tr>
+              ) : null}
             </tbody>
           </table>
         </div>
@@ -381,10 +392,10 @@ export const StocktakePage = ({
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="primary" onClick={handleApply} disabled={!hasDrafts}>
-            Apply stocktake
+            Commit stocktake
           </Button>
           <Button variant="ghost" onClick={resetDrafts}>
-            Clear drafts
+            Clear entries
           </Button>
         </div>
         <p className="text-xs text-slate-500">
@@ -394,7 +405,7 @@ export const StocktakePage = ({
 
       <section className="space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-slate-900">Add an item manually</h2>
+          <h2 className="text-lg font-semibold text-slate-900">Register a new item</h2>
           {manualStatus ? (
             <p className="text-xs text-emerald-600">{manualStatus}</p>
           ) : null}
@@ -404,3 +415,6 @@ export const StocktakePage = ({
     </div>
   )
 }
+
+
+

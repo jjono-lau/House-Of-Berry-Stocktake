@@ -37,9 +37,11 @@ export const HistoryPage = ({ history, exportWorkbookBytes, metadata }) => {
   const summary = useMemo(() => {
     return filteredHistory.reduce(
       (acc, entry) => {
+        const sold = entry.sold ?? 0
+        const received = entry.received ?? 0
         acc.adjustments += 1
-        acc.sold += entry.sold ?? 0
-        acc.received += entry.received ?? 0
+        acc.sold += sold
+        acc.received += received
         acc.units += entry.delta
         acc.value += entry.unitCost ? entry.unitCost * entry.delta : 0
         if (!acc.latest || new Date(entry.timestamp) > new Date(acc.latest)) {
@@ -55,15 +57,15 @@ export const HistoryPage = ({ history, exportWorkbookBytes, metadata }) => {
     const bytes = exportWorkbookBytes()
     const fileName = metadata?.sourceFileName
       ? metadata.sourceFileName.replace(/\.xlsx?$/i, '')
-      : 'jacquelines-stocktake'
+      : 'stocktake-control'
     triggerWorkbookDownload(bytes, `${fileName}-with-history.xlsx`)
   }
 
   if (!history.length) {
     return (
       <EmptyState
-        title="No adjustments yet"
-        message="Once you apply changes from the Stocktake page we will log every movement here, including who performed it and the notes."
+        title="No adjustments recorded"
+        message="Commit stocktake changes to begin capturing a full movement audit trail with user attribution and commentary."
       />
     )
   }
@@ -72,8 +74,8 @@ export const HistoryPage = ({ history, exportWorkbookBytes, metadata }) => {
     <div className="space-y-10">
       <PageHeader
         eyebrow="History"
-        title="Every adjustment, logged"
-        description="Audit trail of stock movements with who made the change, the delta, and any notes captured at the time."
+        title="Stock movement history"
+        description="Comprehensive audit trail of stock movements, responsible users, variance totals, and supporting notes."
         actions={<Button variant="secondary" onClick={handleExport}>Export workbook</Button>}
       />
 
@@ -81,19 +83,11 @@ export const HistoryPage = ({ history, exportWorkbookBytes, metadata }) => {
         <MetricCard
           label="Adjustments"
           value={formatNumber(summary.adjustments)}
-          delta={summary.latest ? formatRelativeTime(summary.latest) : '?'}
+          delta={summary.latest ? formatRelativeTime(summary.latest) : '—'}
           deltaLabel={summary.latest ? 'Last adjustment' : ''}
         />
-        <MetricCard
-          label="Units sold"
-          value={formatNumber(summary.sold)}
-          positive={false}
-        />
-        <MetricCard
-          label="Units received"
-          value={formatNumber(summary.received)}
-          positive={summary.received > 0}
-        />
+        <MetricCard label="Units sold" value={formatNumber(summary.sold)} positive={false} />
+        <MetricCard label="Units received" value={formatNumber(summary.received)} positive={summary.received > 0} />
         <MetricCard
           label="Value impact"
           value={formatDelta(summary.value, { currency: true, showZero: true })}
@@ -147,7 +141,7 @@ export const HistoryPage = ({ history, exportWorkbookBytes, metadata }) => {
                 <th className="px-4 py-3 text-left">Sold</th>
                 <th className="px-4 py-3 text-left">Received</th>
                 <th className="px-4 py-3 text-left">New</th>
-                <th className="px-4 py-3 text-left">? Units</th>
+                <th className="px-4 py-3 text-left">Δ Units</th>
                 <th className="px-4 py-3 text-left">Value</th>
                 <th className="px-4 py-3 text-left">Performed by</th>
                 <th className="px-4 py-3 text-left">Notes</th>
@@ -176,24 +170,28 @@ export const HistoryPage = ({ history, exportWorkbookBytes, metadata }) => {
                   <td className="px-4 py-3 font-semibold text-rose-500">{formatNumber(entry.sold ?? 0)}</td>
                   <td className="px-4 py-3 font-semibold text-emerald-600">{formatNumber(entry.received ?? 0)}</td>
                   <td className="px-4 py-3 text-slate-600">{formatNumber(entry.newCount)}</td>
-                  <td className={`px-4 py-3 font-semibold ${
-                    entry.delta > 0 ? 'text-emerald-600' : entry.delta < 0 ? 'text-rose-500' : 'text-slate-500'
-                  }`}>
+                  <td
+                    className={`px-4 py-3 font-semibold ${
+                      entry.delta > 0 ? 'text-emerald-600' : entry.delta < 0 ? 'text-rose-500' : 'text-slate-500'
+                    }`}
+                  >
                     {formatDelta(entry.delta, { showZero: true })}
                   </td>
-                  <td className={`px-4 py-3 font-medium ${
-                    entry.unitCost && entry.unitCost * entry.delta !== 0
-                      ? entry.unitCost * entry.delta > 0
-                        ? 'text-emerald-600'
-                        : 'text-rose-500'
-                      : 'text-slate-500'
-                  }`}>
+                  <td
+                    className={`px-4 py-3 font-medium ${
+                      entry.unitCost && entry.unitCost * entry.delta !== 0
+                        ? entry.unitCost * entry.delta > 0
+                          ? 'text-emerald-600'
+                          : 'text-rose-500'
+                        : 'text-slate-500'
+                    }`}
+                  >
                     {entry.unitCost
                       ? formatDelta(entry.unitCost * entry.delta, { currency: true, showZero: true })
-                      : '?'}
+                      : '—'}
                   </td>
-                  <td className="px-4 py-3 text-sm text-slate-600">{entry.performedBy || '?'}</td>
-                  <td className="px-4 py-3 text-sm text-slate-500">{entry.notes || '?'}</td>
+                  <td className="px-4 py-3 text-sm text-slate-600">{entry.performedBy || '—'}</td>
+                  <td className="px-4 py-3 text-sm text-slate-500">{entry.notes || '—'}</td>
                 </tr>
               ))}
             </tbody>

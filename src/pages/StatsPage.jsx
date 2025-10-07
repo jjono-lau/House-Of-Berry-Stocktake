@@ -20,7 +20,7 @@ const MovementsList = ({ title, items, emptyLabel, highlight = 'neutral' }) => (
             <div className="space-y-1">
               <p className="text-sm font-medium text-slate-800">{item.name}</p>
               <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                {item.sku || 'No SKU'} . {item.category || 'Uncategorised'}
+                {item.sku || 'No SKU'} | {item.category || 'Uncategorised'}
               </p>
             </div>
             <div className="text-right text-sm font-semibold">
@@ -143,8 +143,8 @@ export const StatsPage = ({ inventory, totals, recentMovements }) => {
   if (!inventory.length) {
     return (
       <EmptyState
-        title="Insights unlock after your first import"
-        message="Upload a workbook and record at least one stocktake to see category breakdowns, movers, and valuation stats."
+        title="Analytics available after first import"
+        message="Import a workbook and complete at least one stocktake to unlock consumption analytics and valuation metrics."
       />
     )
   }
@@ -156,8 +156,8 @@ export const StatsPage = ({ inventory, totals, recentMovements }) => {
     <div className="space-y-10">
       <PageHeader
         eyebrow="Insights"
-        title="How your stock is moving"
-        description={`We analyse the last ${MOVEMENT_WINDOW_DAYS}-day movement window to surface trends, top outflows, and category breakdowns.`}
+        title="Inventory performance analytics"
+        description={`We analyse the last ${MOVEMENT_WINDOW_DAYS}-day movement window to surface trends, Highest consumptions, and Category contributions.`}
       />
 
       <section className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
@@ -181,23 +181,23 @@ export const StatsPage = ({ inventory, totals, recentMovements }) => {
 
       <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <MovementsList
-          title="Top outflow"
+          title="Highest consumption"
           items={topOutflow}
-          emptyLabel="No sold items in the selected window."
+          emptyLabel="No outbound movements recorded in the selected window."
           highlight="outflow"
         />
         <MovementsList
-          title="Least moved"
+          title="Lowest consumption"
           items={leastMoved}
-          emptyLabel="Everything moved at least once in this window."
+          emptyLabel="Every tracked item recorded movement in this window."
           highlight="calm"
         />
       </section>
 
       <section className="rounded-3xl border border-slate-200 bg-white/70 p-6 shadow-sm backdrop-blur">
-        <h2 className="text-lg font-semibold text-slate-900">Category breakdown</h2>
+        <h2 className="text-lg font-semibold text-slate-900">Category contribution</h2>
         <p className="mt-2 text-sm text-slate-600">
-          Share of units and value across your current inventory snapshot.
+          Contribution of categories to unit volumes and inventory value.
         </p>
         <div className="mt-6 space-y-4">
           {categoryBreakdown.map((bucket) => (
