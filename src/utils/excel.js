@@ -1,4 +1,4 @@
-import * as XLSX from 'xlsx'
+import * as XLSX from 'xlsx-js-style'
 import {
   DEFAULT_TEMPLATE_ROWS,
   EXCEL_MIME_TYPE,
@@ -25,6 +25,44 @@ const parseNumber = (value) => {
 }
 
 const parseCurrency = parseNumber
+
+const MOVEMENT_HEADERS = [
+  'SKU',
+  'Item',
+  'Category',
+  'Previous Count',
+  'Sold',
+  'Received',
+  'New Count',
+  'Delta',
+  'Unit Cost',
+  'Value Change',
+  'Performed By',
+  'Notes',
+  'Timestamp',
+]
+
+const ensureFiniteNumber = (value, fallback = 0) => {
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? numeric : fallback
+}
+
+const calculateLayersQuantity = (layers = []) =>
+  layers.reduce((acc, layer) => acc + ensureFiniteNumber(layer?.quantity, 0), 0)
+
+const calculateLayersValue = (layers = []) =>
+  layers.reduce(
+    (acc, layer) => acc + ensureFiniteNumber(layer?.quantity, 0) * ensureFiniteNumber(layer?.unitCost, 0),
+    0,
+  )
+
+const calculateAverageLayerCost = (layers = [], fallback = 0) => {
+  const quantity = calculateLayersQuantity(layers)
+  if (quantity === 0) {
+    return ensureFiniteNumber(fallback, 0)
+  }
+  return calculateLayersValue(layers) / quantity
+}
 
 const toIsoTimestamp = (value) => {
   if (!value && value !== 0) {
@@ -103,12 +141,125 @@ export const parseInventoryWorkbook = (arrayBuffer) => {
       lastUpdated: toIsoTimestamp(row[REQUIRED_COLUMNS.lastUpdated]),
     }
   })
+  let history = []
+  const movementsSheet = workbook.Sheets[HISTORY_SHEET_NAME]
+  if (movementsSheet) {
+    const movementRows = XLSX.utils.sheet_to_json(movementsSheet, {
+      header: MOVEMENT_HEADERS,
+      range: 1,
+      defval: '',
+      raw: false,
+    })
+    history = movementRows
+      .filter((row) => normaliseString(row.SKU) || normaliseString(row.Item))
+      .map((row, index) => {
+        const sku = normaliseString(row.SKU)
+        const name = normaliseString(row.Item) || 'Unnamed item'
+        const category = normaliseString(row.Category) || 'Uncategorised'
+        const previousCount = parseNumber(row['Previous Count'])
+        const sold = parseNumber(row.Sold)
+        const received = parseNumber(row.Received)
+        const hasNewCount = row['New Count'] !== ''
+        const newCount = hasNewCount ? parseNumber(row['New Count']) : previousCount - sold + received
+        const hasDelta = row.Delta !== ''
+        const delta = hasDelta ? parseNumber(row.Delta) : newCount - previousCount
+        const unitCost = parseCurrency(row['Unit Cost'])
+        const rawValueChange = parseCurrency(row['Value Change'])
+        const performedBy = normaliseString(row['Performed By'])
+        const notes = normaliseString(row.Notes)
+        const timestamp = toIsoTimestamp(row.Timestamp)
+        const soldValue = sold * unitCost
+        const receivedValue = received * unitCost
+        const valueImpact =
+          rawValueChange !== 0 || row['Value Change'] === 0
+            ? rawValueChange
+            : receivedValue - soldValue
+        const soldUnitCost = sold > 0 ? soldValue / sold : 0
+        const receivedUnitCost = received > 0 ? receivedValue / received : 0
+        return {
+          id: `${sku || name || 'movement'}-${index}`,
+          itemId: sku || name || `movement-${index}`,
+          sku,
+          name,
+          category,
+          previousCount,
+          sold,
+          received,
+          newCount,
+          delta,
+          unitCost,
+          soldValue,
+          receivedValue,
+          soldUnitCost,
+          receivedUnitCost,
+          valueImpact,
+          performedBy,
+          notes,
+          timestamp,
+        }
+      })
+  }
+  const lastStocktakeAt = history.reduce((latest, entry) => {
+    if (!entry.timestamp) {
+      return latest
+    }
+    const value = new Date(entry.timestamp).getTime()
+    return Number.isFinite(value) && value > latest ? value : latest
+  }, 0)
   return {
     inventory,
+    history,
     workbookMeta: {
       sheetName,
       importedAt: new Date().toISOString(),
+      lastStocktakeAt: lastStocktakeAt ? new Date(lastStocktakeAt).toISOString() : null,
     },
+  }
+}
+
+const HEADER_CELL_STYLE = {
+  fill: { patternType: 'solid', fgColor: { rgb: '4F46E5' } },
+  font: { bold: true, color: { rgb: 'FFFFFF' } },
+  alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+  border: {
+    top: { style: 'thin', color: { rgb: 'E2E8F0' } },
+    bottom: { style: 'thin', color: { rgb: 'E2E8F0' } },
+    left: { style: 'thin', color: { rgb: 'E2E8F0' } },
+    right: { style: 'thin', color: { rgb: 'E2E8F0' } },
+  },
+}
+
+const LABEL_CELL_STYLE = {
+  font: { bold: true, color: { rgb: '1F2937' } },
+}
+
+const VALUE_CELL_STYLE = {
+  alignment: { horizontal: 'left', vertical: 'center' },
+}
+
+const applyRowStyles = (worksheet, rowIndex, columnCount, style) => {
+  for (let columnIndex = 0; columnIndex < columnCount; columnIndex += 1) {
+    const cellAddress = XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex })
+    if (!worksheet[cellAddress]) {
+      continue
+    }
+    worksheet[cellAddress].s = {
+      ...(worksheet[cellAddress].s ?? {}),
+      ...style,
+    }
+  }
+}
+
+const applyColumnStyles = (worksheet, columnIndex, rowCount, style) => {
+  for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
+    const cellAddress = XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex })
+    if (!worksheet[cellAddress]) {
+      continue
+    }
+    worksheet[cellAddress].s = {
+      ...(worksheet[cellAddress].s ?? {}),
+      ...style,
+    }
   }
 }
 
@@ -123,7 +274,21 @@ export const createTemplateWorkbook = () => {
     { wch: 14 },
     { wch: 16 },
   ]
+  applyRowStyles(worksheet, 0, TEMPLATE_HEADERS.length, HEADER_CELL_STYLE)
   XLSX.utils.book_append_sheet(workbook, worksheet, EXCEL_SHEET_NAME)
+  const movementsSheet = createEmptyMovementsSheet()
+  XLSX.utils.book_append_sheet(workbook, movementsSheet, HISTORY_SHEET_NAME)
+  const summarySheet = createSummarySheet(
+    DEFAULT_TEMPLATE_ROWS.slice(1).map((row) => ({
+      currentCount: parseNumber(row[3]),
+      unitCost: parseCurrency(row[4]),
+      category: row[2],
+    })),
+    {
+      sourceFileName: 'Template workbook',
+    },
+  )
+  XLSX.utils.book_append_sheet(workbook, summarySheet, SUMMARY_SHEET_NAME)
   return XLSX.write(workbook, { bookType: 'xlsx', type: 'array', cellDates: true })
 }
 
@@ -138,13 +303,21 @@ export const createBlankTemplateWorkbook = () => {
     { wch: 14 },
     { wch: 16 },
   ]
+  applyRowStyles(worksheet, 0, TEMPLATE_HEADERS.length, HEADER_CELL_STYLE)
   XLSX.utils.book_append_sheet(workbook, worksheet, EXCEL_SHEET_NAME)
+  const movementsSheet = createEmptyMovementsSheet()
+  XLSX.utils.book_append_sheet(workbook, movementsSheet, HISTORY_SHEET_NAME)
+  const summarySheet = createSummarySheet([], { sourceFileName: 'Blank workbook' })
+  XLSX.utils.book_append_sheet(workbook, summarySheet, SUMMARY_SHEET_NAME)
   return XLSX.write(workbook, { bookType: 'xlsx', type: 'array', cellDates: true })
 }
 
 const createSummarySheet = (inventory, metadata = {}) => {
   const totalUnits = inventory.reduce((acc, item) => acc + item.currentCount, 0)
-  const totalValue = inventory.reduce((acc, item) => acc + item.currentCount * item.unitCost, 0)
+  const totalValue = inventory.reduce(
+    (acc, item) => acc + calculateLayersValue(item.costLayers ?? []),
+    0,
+  )
   const summaryRows = [
     ['Stocktake Inventory Tool'],
     ['Generated At', new Date()],
@@ -157,6 +330,9 @@ const createSummarySheet = (inventory, metadata = {}) => {
   ]
   const summarySheet = XLSX.utils.aoa_to_sheet(summaryRows)
   summarySheet['!cols'] = [{ wch: 20 }, { wch: 28 }]
+  applyRowStyles(summarySheet, 0, 2, HEADER_CELL_STYLE)
+  applyColumnStyles(summarySheet, 0, summaryRows.length, LABEL_CELL_STYLE)
+  applyColumnStyles(summarySheet, 1, summaryRows.length, VALUE_CELL_STYLE)
   return summarySheet
 }
 
@@ -174,28 +350,17 @@ const createMovementsSheet = (history) => {
     'New Count': entry.newCount,
     Delta: entry.delta,
     'Unit Cost': entry.unitCost ?? '',
-    'Value Change': entry.unitCost ? entry.unitCost * entry.delta : '',
+    'Value Change':
+      entry.valueImpact ??
+      (entry.receivedValue ?? 0) - (entry.soldValue ?? (entry.sold ?? 0) * (entry.soldUnitCost ?? entry.unitCost ?? 0)),
     'Performed By': entry.performedBy || '',
     Notes: entry.notes || '',
     Timestamp: entry.timestamp ? new Date(entry.timestamp) : '',
   }))
   const worksheet = XLSX.utils.json_to_sheet(rows, {
-    header: [
-      'SKU',
-      'Item',
-      'Category',
-      'Previous Count',
-      'Sold',
-      'Received',
-      'New Count',
-      'Delta',
-      'Unit Cost',
-      'Value Change',
-      'Performed By',
-      'Notes',
-      'Timestamp',
-    ],
+    header: MOVEMENT_HEADERS,
   })
+  applyRowStyles(worksheet, 0, MOVEMENT_HEADERS.length, HEADER_CELL_STYLE)
   worksheet['!cols'] = [
     { wch: 14 },
     { wch: 26 },
@@ -221,12 +386,14 @@ export const createUpdatedWorkbook = (inventory, metadata = {}, history = []) =>
     [REQUIRED_COLUMNS.name]: item.name,
     [REQUIRED_COLUMNS.category]: item.category,
     [REQUIRED_COLUMNS.count]: item.currentCount,
-    [REQUIRED_COLUMNS.unitCost]: item.unitCost,
+    [REQUIRED_COLUMNS.unitCost]: calculateAverageLayerCost(item.costLayers ?? [], item.unitCost),
     [REQUIRED_COLUMNS.lastUpdated]: item.lastUpdated ? new Date(item.lastUpdated) : '',
   }))
+  const requiredHeaders = Object.values(REQUIRED_COLUMNS)
   const worksheet = XLSX.utils.json_to_sheet(rows, {
-    header: Object.values(REQUIRED_COLUMNS),
+    header: requiredHeaders,
   })
+  applyRowStyles(worksheet, 0, requiredHeaders.length, HEADER_CELL_STYLE)
   worksheet['!cols'] = [
     { wch: 14 },
     { wch: 28 },
@@ -240,10 +407,8 @@ export const createUpdatedWorkbook = (inventory, metadata = {}, history = []) =>
     worksheet,
     metadata.sheetName || EXCEL_SHEET_NAME,
   )
-  const movementsSheet = createMovementsSheet(history)
-  if (movementsSheet) {
-    XLSX.utils.book_append_sheet(workbook, movementsSheet, HISTORY_SHEET_NAME)
-  }
+  const movementsSheet = createMovementsSheet(history) || createEmptyMovementsSheet()
+  XLSX.utils.book_append_sheet(workbook, movementsSheet, HISTORY_SHEET_NAME)
   XLSX.utils.book_append_sheet(
     workbook,
     createSummarySheet(inventory, metadata),
@@ -267,3 +432,27 @@ export const triggerWorkbookDownload = (workbookBytes, fileName) => {
   document.body.removeChild(anchor)
   URL.revokeObjectURL(url)
 }
+
+const createEmptyMovementsSheet = () => {
+  const worksheet = XLSX.utils.aoa_to_sheet([MOVEMENT_HEADERS])
+  applyRowStyles(worksheet, 0, MOVEMENT_HEADERS.length, HEADER_CELL_STYLE)
+  worksheet['!cols'] = [
+    { wch: 14 },
+    { wch: 26 },
+    { wch: 18 },
+    { wch: 14 },
+    { wch: 12 },
+    { wch: 12 },
+    { wch: 14 },
+    { wch: 12 },
+    { wch: 12 },
+    { wch: 16 },
+    { wch: 18 },
+    { wch: 28 },
+    { wch: 22 },
+  ]
+  return worksheet
+}
+
+
+

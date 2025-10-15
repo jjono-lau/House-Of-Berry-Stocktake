@@ -3,7 +3,7 @@ import { ArrowRight, Download, UploadCloud } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
 import { Button } from '../components/Button.jsx'
 import { PageHeader } from '../components/PageHeader.jsx'
-import { APP_PAGES } from '../constants.js'
+import { APP_PAGES, EXCEL_SHEET_NAME, HISTORY_SHEET_NAME, SUMMARY_SHEET_NAME } from '../constants.js'
 import { triggerWorkbookDownload } from '../utils/excel.js'
 import { formatDateTime } from '../utils/format.js'
 
@@ -44,23 +44,36 @@ export const DemoPage = ({
   const [statusMessage, setStatusMessage] = useState('')
   const [isDragging, setIsDragging] = useState(false)
   const fileInputRef = useRef(null)
+  const baseSheetName = metadata?.sheetName || EXCEL_SHEET_NAME
+
+  const sheetSummary = useMemo(() => {
+    if (!hasImported) {
+      return '—'
+    }
+    const sources = [SUMMARY_SHEET_NAME, HISTORY_SHEET_NAME, baseSheetName]
+    return Array.from(new Set(sources)).join(', ')
+  }, [hasImported, baseSheetName])
 
   const infoRows = useMemo(
     () => [
       {
         label: 'Source File',
-        value: metadata?.sourceFileName || '',
+        value: metadata?.sourceFileName || '—',
       },
       {
         label: 'Imported',
-        value: metadata?.lastImportedAt ? formatDateTime(metadata.lastImportedAt) : '',
+        value: metadata?.lastImportedAt ? formatDateTime(metadata.lastImportedAt) : '—',
       },
       {
         label: 'Last Stocktake',
-        value: metadata?.lastStocktakeAt ? formatDateTime(metadata.lastStocktakeAt) : '',
+        value: metadata?.lastStocktakeAt ? formatDateTime(metadata.lastStocktakeAt) : '—',
+      },
+      {
+        label: 'Available sheets',
+        value: sheetSummary,
       },
     ],
-    [metadata],
+    [metadata, sheetSummary],
   )
 
   const handleTemplateDownload = () => {

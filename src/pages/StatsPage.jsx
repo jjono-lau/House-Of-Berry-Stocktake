@@ -54,14 +54,21 @@ export const StatsPage = ({ inventory, totals, recentMovements }) => {
       (acc, entry) => {
         const sold = entry.sold ?? 0
         const received = entry.received ?? 0
-        const unitCost = entry.unitCost ?? 0
+        const soldValue =
+          entry.soldValue !== undefined
+            ? entry.soldValue
+            : sold * (entry.soldUnitCost ?? entry.unitCost ?? 0)
+        const receivedValue =
+          entry.receivedValue !== undefined
+            ? entry.receivedValue
+            : received * (entry.receivedUnitCost ?? entry.unitCost ?? 0)
         if (sold > 0 || received > 0) {
           acc.entries += 1
         }
         acc.sold += sold
         acc.received += received
-        acc.valueOut += sold * unitCost
-        acc.valueIn += received * unitCost
+        acc.valueOut += soldValue
+        acc.valueIn += receivedValue
         return acc
       },
       { entries: 0, sold: 0, received: 0, valueOut: 0, valueIn: 0 },
@@ -99,11 +106,18 @@ export const StatsPage = ({ inventory, totals, recentMovements }) => {
       const bucket = map.get(key)
       const sold = entry.sold ?? 0
       const received = entry.received ?? 0
-      const unitCost = entry.unitCost ?? 0
+      const soldValue =
+        entry.soldValue !== undefined
+          ? entry.soldValue
+          : sold * (entry.soldUnitCost ?? entry.unitCost ?? 0)
+      const receivedValue =
+        entry.receivedValue !== undefined
+          ? entry.receivedValue
+          : received * (entry.receivedUnitCost ?? entry.unitCost ?? 0)
       bucket.sold += sold
       bucket.received += received
-      bucket.soldValue += sold * unitCost
-      bucket.receivedValue += received * unitCost
+      bucket.soldValue += soldValue
+      bucket.receivedValue += receivedValue
     })
     return Array.from(map.values())
   }, [inventory, recentMovements])
@@ -127,7 +141,15 @@ export const StatsPage = ({ inventory, totals, recentMovements }) => {
       }
       const bucket = map.get(key)
       bucket.units += item.currentCount
-      bucket.value += item.currentCount * item.unitCost
+      const layerValue = (item.costLayers ?? []).reduce((acc, layer) => {
+        const quantity = Number(layer?.quantity ?? 0)
+        const cost = Number(layer?.unitCost ?? 0)
+        if (!Number.isFinite(quantity) || !Number.isFinite(cost)) {
+          return acc
+        }
+        return acc + quantity * cost
+      }, 0)
+      bucket.value += layerValue
     })
     const totalValue = Array.from(map.values()).reduce((acc, bucket) => acc + bucket.value, 0)
     return Array.from(map.entries())

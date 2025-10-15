@@ -1,4 +1,4 @@
-import { Search } from 'lucide-react'
+﻿import { Search } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Button } from '../components/Button.jsx'
 import { EmptyState } from '../components/EmptyState.jsx'
@@ -11,6 +11,11 @@ import {
   formatRelativeTime,
 } from '../utils/format.js'
 import { triggerWorkbookDownload } from '../utils/excel.js'
+
+const computeValueImpact = (entry) =>
+  entry.valueImpact ??
+  (entry.receivedValue ?? 0) -
+    (entry.soldValue ?? (entry.sold ?? 0) * (entry.soldUnitCost ?? entry.unitCost ?? 0))
 
 export const HistoryPage = ({ history, exportWorkbookBytes, metadata }) => {
   const [search, setSearch] = useState('')
@@ -43,7 +48,7 @@ export const HistoryPage = ({ history, exportWorkbookBytes, metadata }) => {
         acc.sold += sold
         acc.received += received
         acc.units += entry.delta
-        acc.value += entry.unitCost ? entry.unitCost * entry.delta : 0
+        acc.value += computeValueImpact(entry)
         if (!acc.latest || new Date(entry.timestamp) > new Date(acc.latest)) {
           acc.latest = entry.timestamp
         }
@@ -83,7 +88,7 @@ export const HistoryPage = ({ history, exportWorkbookBytes, metadata }) => {
         <MetricCard
           label="Adjustments"
           value={formatNumber(summary.adjustments)}
-          delta={summary.latest ? formatRelativeTime(summary.latest) : '—'}
+          delta={summary.latest ? formatRelativeTime(summary.latest) : '-'}
           deltaLabel={summary.latest ? 'Last adjustment' : ''}
         />
         <MetricCard label="Units sold" value={formatNumber(summary.sold)} positive={false} />
@@ -148,52 +153,49 @@ export const HistoryPage = ({ history, exportWorkbookBytes, metadata }) => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 bg-white">
-              {filteredHistory.map((entry) => (
-                <tr key={entry.id} className="transition hover:bg-indigo-50/40">
-                  <td className="px-4 py-3 text-xs text-slate-500">
-                    <div className="space-y-1">
-                      <p>{formatDateTime(entry.timestamp)}</p>
-                      <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
-                        {formatRelativeTime(entry.timestamp)}
-                      </p>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="space-y-1">
-                      <p className="font-medium text-slate-800">{entry.name}</p>
-                      <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                        {entry.sku || 'No SKU'} / {entry.category || 'Uncategorised'}
-                      </p>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-slate-500">{formatNumber(entry.previousCount)}</td>
-                  <td className="px-4 py-3 font-semibold text-rose-500">{formatNumber(entry.sold ?? 0)}</td>
-                  <td className="px-4 py-3 font-semibold text-emerald-600">{formatNumber(entry.received ?? 0)}</td>
-                  <td className="px-4 py-3 text-slate-600">{formatNumber(entry.newCount)}</td>
-                  <td
-                    className={`px-4 py-3 font-semibold ${
-                      entry.delta > 0 ? 'text-emerald-600' : entry.delta < 0 ? 'text-rose-500' : 'text-slate-500'
-                    }`}
-                  >
-                    {formatDelta(entry.delta, { showZero: true })}
-                  </td>
-                  <td
-                    className={`px-4 py-3 font-medium ${
-                      entry.unitCost && entry.unitCost * entry.delta !== 0
-                        ? entry.unitCost * entry.delta > 0
-                          ? 'text-emerald-600'
-                          : 'text-rose-500'
-                        : 'text-slate-500'
-                    }`}
-                  >
-                    {entry.unitCost
-                      ? formatDelta(entry.unitCost * entry.delta, { currency: true, showZero: true })
-                      : '—'}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-slate-600">{entry.performedBy || '—'}</td>
-                  <td className="px-4 py-3 text-sm text-slate-500">{entry.notes || '—'}</td>
-                </tr>
-              ))}
+              {filteredHistory.map((entry) => {
+                const valueImpact = computeValueImpact(entry)
+                return (
+                  <tr key={entry.id} className="transition hover:bg-indigo-50/40">
+                    <td className="px-4 py-3 text-xs text-slate-500">
+                      <div className="space-y-1">
+                        <p>{formatDateTime(entry.timestamp)}</p>
+                        <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
+                          {formatRelativeTime(entry.timestamp)}
+                        </p>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="space-y-1">
+                        <p className="font-medium text-slate-800">{entry.name}</p>
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                          {entry.sku || 'No SKU'} / {entry.category || 'Uncategorised'}
+                        </p>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-slate-500">{formatNumber(entry.previousCount)}</td>
+                    <td className="px-4 py-3 font-semibold text-rose-500">{formatNumber(entry.sold ?? 0)}</td>
+                    <td className="px-4 py-3 font-semibold text-emerald-600">{formatNumber(entry.received ?? 0)}</td>
+                    <td className="px-4 py-3 text-slate-600">{formatNumber(entry.newCount)}</td>
+                    <td
+                      className={`px-4 py-3 font-semibold ${
+                        entry.delta > 0 ? 'text-emerald-600' : entry.delta < 0 ? 'text-rose-500' : 'text-slate-500'
+                      }`}
+                    >
+                      {formatDelta(entry.delta, { showZero: true })}
+                    </td>
+                    <td
+                      className={`px-4 py-3 font-medium ${
+                        valueImpact !== 0 ? (valueImpact > 0 ? 'text-emerald-600' : 'text-rose-500') : 'text-slate-500'
+                      }`}
+                    >
+                      {formatDelta(valueImpact, { currency: true, showZero: true })}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-slate-600">{entry.performedBy || '-'}</td>
+                    <td className="px-4 py-3 text-sm text-slate-500">{entry.notes || '-'}</td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -201,3 +203,4 @@ export const HistoryPage = ({ history, exportWorkbookBytes, metadata }) => {
     </div>
   )
 }
+

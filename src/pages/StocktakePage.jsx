@@ -1,4 +1,4 @@
-import { Search } from 'lucide-react'
+﻿import { Search } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Button } from '../components/Button.jsx'
 import { EmptyState } from '../components/EmptyState.jsx'
@@ -12,7 +12,6 @@ import {
   formatDelta,
   formatNumber,
 } from '../utils/format.js'
-import { parseNumericInput } from '../utils/numbers.js'
 
 const nextSkuPreview = (number) => {
   const count = number ?? 1
@@ -55,7 +54,7 @@ const ManualItemForm = ({ onSubmit, nextSku }) => {
             name="name"
             value={form.name}
             onChange={handleChange}
-            placeholder="Shampoo"
+            placeholder="Item"
             className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
             required
           />
@@ -66,7 +65,7 @@ const ManualItemForm = ({ onSubmit, nextSku }) => {
             name="category"
             value={form.category}
             onChange={handleChange}
-            placeholder="Bath"
+            placeholder="Category"
             className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
           />
         </label>
@@ -89,18 +88,19 @@ const ManualItemForm = ({ onSubmit, nextSku }) => {
             value={form.unitCost}
             onChange={handleChange}
             type="number"
-            step="0.01"
+            step="any"
             min="0"
             className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
           />
         </label>
         <label className="space-y-2 text-sm">
-          <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Performed by</span>
+          <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Identifier (ID)</span>
           <input
+            required
             name="performedBy"
             value={form.performedBy}
             onChange={handleChange}
-            placeholder="Your name"
+            placeholder="e.g. Name / Location / Purpose etc."
             className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
           />
         </label>
@@ -131,6 +131,8 @@ export const StocktakePage = ({
   hasImported,
   hasDrafts,
   updateDraftAdjustment,
+  updateUnitCost,
+  previewDraftImpact,
   resetDrafts,
   applyStocktake,
   exportWorkbookBytes,
@@ -167,13 +169,17 @@ export const StocktakePage = ({
     const bytes = exportWorkbookBytes()
     const fileName = metadata?.sourceFileName
       ? metadata.sourceFileName.replace(/\.xlsx?$/i, '')
-      : 'jacquelines-stocktake'
+      : 'stocktake-control'
     triggerWorkbookDownload(bytes, `${fileName}-updated.xlsx`)
     setStatus('Generated the latest workbook, including movement history and summary tabs.')
   }
 
   const handleApply = () => {
-    const historyEntries = applyStocktake({ performedBy, notes })
+    if (!performedBy.trim()) {
+      setStatus('Enter the name of the person responsible before committing the stocktake.')
+      return
+    }
+    const historyEntries = applyStocktake({ performedBy: performedBy.trim(), notes })
     if (historyEntries.length) {
       setStatus(`Recorded ${historyEntries.length} adjustments.`)
     } else {
@@ -214,7 +220,7 @@ export const StocktakePage = ({
             <Button variant="ghost" onClick={resetDrafts}>
               Clear entries
             </Button>
-            <Button variant="primary" onClick={handleApply} disabled={!hasDrafts}>
+            <Button variant="primary" onClick={handleApply} disabled={!hasDrafts || !performedBy.trim()}>
               Commit updates
             </Button>
             <Button variant="secondary" onClick={handleExport}>
@@ -296,6 +302,7 @@ export const StocktakePage = ({
               <tr>
                 <th className="px-4 py-3 text-left">Item</th>
                 <th className="px-4 py-3 text-left">Current</th>
+                <th className="px-4 py-3 text-left">Unit cost</th>
                 <th className="px-4 py-3 text-left">Sold</th>
                 <th className="px-4 py-3 text-left">Received</th>
                 <th className="px-4 py-3 text-left">Variance (units)</th>
@@ -304,65 +311,100 @@ export const StocktakePage = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 bg-white">
-              {filteredInventory.map((item) => {
-                const sold = Math.max(0, parseNumericInput(item.draftSold, 0))
-                const received = Math.max(0, parseNumericInput(item.draftReceived, 0))
-                const nextCount = item.currentCount - sold + received
-                const delta = nextCount - item.currentCount
-                const valueImpact = delta * item.unitCost
+                {filteredInventory.map((item) => {
+                  const costPreview = previewDraftImpact(item)
+                  const nextCount =
+                    typeof costPreview.totalQuantity === 'number'
+                      ? costPreview.totalQuantity
+                      : item.currentCount
+                  const delta = nextCount - item.currentCount
+                  const valueImpact = costPreview.receivedValue - costPreview.soldValue
+                  const layerValue = (item.costLayers ?? []).reduce((acc, layer) => {
+                    const quantity = Number(layer?.quantity ?? 0)
+                    const cost = Number(layer?.unitCost ?? 0)
+                    if (!Number.isFinite(quantity) || !Number.isFinite(cost)) {
+                      return acc
+                    }
+                    return acc + quantity * cost
+                  }, 0)
+                  const layerQuantity = (item.costLayers ?? []).reduce((acc, layer) => {
+                    const quantity = Number(layer?.quantity ?? 0)
+                    return Number.isFinite(quantity) ? acc + quantity : acc
+                  }, 0)
+                  const averageCost =
+                    layerQuantity > 0 ? layerValue / layerQuantity : item.unitCost ?? 0
 
-                return (
-                  <tr key={item.id} className="transition hover:bg-indigo-50/40">
-                    <td className="px-4 py-3">
-                      <div className="space-y-1">
-                        <p className="font-medium text-slate-800">{item.name}</p>
-                        <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                          {item.sku || 'No SKU'} | {item.category || 'Uncategorised'}
-                        </p>
-                      </div>
+                  return (
+                    <tr key={item.id} className="transition hover:bg-indigo-50/40">
+                      <td className="px-4 py-3">
+                        <div className="space-y-1">
+                          <p className="font-medium text-slate-800">{item.name}</p>
+                          <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                            {item.sku || 'No SKU'} | {item.category || 'Uncategorised'}
+                          </p>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-slate-600">{formatNumber(item.currentCount)}</td>
+                      <td className="px-4 py-3">
+                        <div className="space-y-1">
+                          <input
+                            value={item.unitCost ?? ''}
+                            onChange={(event) => updateUnitCost(item.id, event.target.value)}
+                            type="number"
+                            min="0"
+                            step="any"
+                            inputMode="decimal"
+                            className="w-32 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                            placeholder="0.00"
+                          />
+                      
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <input
+                          value={item.draftSold}
+                          onChange={(event) => updateDraftAdjustment(item.id, 'draftSold', event.target.value)}
+                          type="number"
+                          min="0"
+                          className="w-24 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                          placeholder="0"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <input
+                          value={item.draftReceived}
+                          onChange={(event) => updateDraftAdjustment(item.id, 'draftReceived', event.target.value)}
+                          type="number"
+                          min="0"
+                          className="w-24 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                          placeholder="0"
+                        />
+                      </td>
+                      <td
+                        className={`px-4 py-3 font-semibold ${
+                          delta > 0 ? 'text-emerald-600' : delta < 0 ? 'text-rose-500' : 'text-slate-500'
+                        }`}
+                      >
+                        {formatDelta(delta, { showZero: true })}
+                      </td>
+                      <td
+                        className={`px-4 py-3 font-medium ${
+                          valueImpact > 0 ? 'text-emerald-600' : valueImpact < 0 ? 'text-rose-500' : 'text-slate-500'
+                        }`}
+                      >
+                        {formatDelta(valueImpact, { currency: true, showZero: true })}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-slate-500">{formatDate(item.lastUpdated)}</td>
+                    </tr>
+                  )
+                })}
+                {!filteredInventory.length ? (
+                  <tr>
+                    <td colSpan={8} className="px-4 py-6 text-center text-sm text-slate-500">
+                      No inventory records available. Register items below to begin tracking.
                     </td>
-                    <td className="px-4 py-3 text-slate-600">{formatNumber(item.currentCount)}</td>
-                    <td className="px-4 py-3">
-                      <input
-                        value={item.draftSold}
-                        onChange={(event) => updateDraftAdjustment(item.id, 'draftSold', event.target.value)}
-                        type="number"
-                        min="0"
-                        className="w-24 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                        placeholder="0"
-                      />
-                    </td>
-                    <td className="px-4 py-3">
-                      <input
-                        value={item.draftReceived}
-                        onChange={(event) => updateDraftAdjustment(item.id, 'draftReceived', event.target.value)}
-                        type="number"
-                        min="0"
-                        className="w-24 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                        placeholder="0"
-                      />
-                    </td>
-                    <td className={`px-4 py-3 font-semibold ${
-                      delta > 0 ? 'text-emerald-600' : delta < 0 ? 'text-rose-500' : 'text-slate-500'
-                    }`}>
-                      {formatDelta(delta, { showZero: true })}
-                    </td>
-                    <td className={`px-4 py-3 font-medium ${
-                      valueImpact > 0 ? 'text-emerald-600' : valueImpact < 0 ? 'text-rose-500' : 'text-slate-500'
-                    }`}>
-                      {formatDelta(valueImpact, { currency: true, showZero: true })}
-                    </td>
-                    <td className="px-4 py-3 text-xs text-slate-500">{formatDate(item.lastUpdated)}</td>
                   </tr>
-                )
-              })}
-              {!filteredInventory.length ? (
-                <tr>
-                  <td colSpan={7} className="px-4 py-6 text-center text-sm text-slate-500">
-                    No inventory records available. Register items below to begin tracking.
-                  </td>
-                </tr>
-              ) : null}
+                ) : null}
             </tbody>
           </table>
         </div>
@@ -372,11 +414,11 @@ export const StocktakePage = ({
         <h2 className="text-lg font-semibold text-slate-900">Apply adjustments</h2>
         <div className="grid gap-4 md:grid-cols-2">
           <label className="space-y-2 text-sm">
-            <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Performed by</span>
+            <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Identifier (ID)</span>
             <input
               value={performedBy}
               onChange={(event) => setPerformedBy(event.target.value)}
-              placeholder="Your name"
+              placeholder="e.g. Name / Location / Purpose etc."
               className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
             />
           </label>
@@ -391,7 +433,7 @@ export const StocktakePage = ({
           </label>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="primary" onClick={handleApply} disabled={!hasDrafts}>
+          <Button variant="primary" onClick={handleApply} disabled={!hasDrafts || !performedBy.trim()}>
             Commit stocktake
           </Button>
           <Button variant="ghost" onClick={resetDrafts}>

@@ -1,6 +1,11 @@
 import { Dot } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { APP_PAGES } from './constants.js'
+import {
+  APP_PAGES,
+  EXCEL_SHEET_NAME,
+  HISTORY_SHEET_NAME,
+  SUMMARY_SHEET_NAME,
+} from './constants.js'
 import { useInventory } from './hooks/useInventory.js'
 import { DemoPage } from './pages/DemoPage.jsx'
 import { HistoryPage } from './pages/HistoryPage.jsx'
@@ -15,7 +20,7 @@ const PAGE_COMPONENTS = {
   stats: StatsPage,
 }
 
-const BRAND_NAME = 'Stocktake Inventory Tool'
+const BRAND_NAME = 'Stocktake Inventory Platform'
 
 export default function App() {
   const inventoryApi = useInventory()
@@ -50,6 +55,25 @@ export default function App() {
   }, [activePage])
 
   const CurrentPage = useMemo(() => PAGE_COMPONENTS[activePage] ?? DemoPage, [activePage])
+  const baseInventorySheet = inventoryApi.metadata?.sheetName || EXCEL_SHEET_NAME
+  const sheetList = useMemo(() => {
+    if (!inventoryApi.metadata?.sourceFileName) {
+      return []
+    }
+    switch (activePage) {
+      case 'history':
+        return [HISTORY_SHEET_NAME]
+      case 'stats':
+        return [baseInventorySheet, HISTORY_SHEET_NAME, SUMMARY_SHEET_NAME]
+      case 'demo':
+        return [SUMMARY_SHEET_NAME]
+      case 'stocktake':
+      default:
+        return [baseInventorySheet]
+    }
+  }, [activePage, baseInventorySheet, inventoryApi.metadata?.sourceFileName])
+  const sheetLabel =
+    sheetList.length > 0 ? `Sheets: ${Array.from(new Set(sheetList)).join(', ')}` : null
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-100 via-indigo-50 to-slate-100 text-slate-900">
@@ -64,14 +88,14 @@ export default function App() {
             <div className="space-y-2">
               <h1 className="text-3xl font-semibold tracking-tight text-slate-900 sm:text-4xl">{BRAND_NAME}</h1>
               <p className="max-w-2xl text-sm leading-relaxed text-slate-600">
-                Import your workbook, record stock movements, and export audit-ready reports with operational insights.
+                Import your workbook, record stock movements, and export accurate reports.
               </p>
             </div>
           </div>
           {inventoryApi.metadata?.sourceFileName ? (
             <div className="rounded-2xl border border-slate-200 bg-white/80 px-5 py-3 text-right text-xs text-slate-500 shadow-sm">
               <p className="font-semibold text-slate-700">{inventoryApi.metadata.sourceFileName}</p>
-              {inventoryApi.metadata.sheetName ? <p>Sheet: {inventoryApi.metadata.sheetName}</p> : null}
+              {sheetLabel ? <p>{sheetLabel}</p> : null}
             </div>
           ) : null}
         </header>

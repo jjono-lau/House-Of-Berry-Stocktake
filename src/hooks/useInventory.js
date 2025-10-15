@@ -12,6 +12,157 @@ import {
 } from '../utils/excel.js'
 import { parseNumericInput } from '../utils/numbers.js'
 
+const INITIAL_METADATA = {
+  sourceFileName: '',
+  lastImportedAt: null,
+  lastStocktakeAt: null,
+  sheetName: null,
+  nextSkuNumber: 1,
+}
+
+const EPSILON = 1e-9
+
+const ensureFiniteNumber = (value, fallback = 0) => {
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? numeric : fallback
+}
+
+const normaliseUnitCost = (value) => ensureFiniteNumber(value, 0)
+
+const createInitialCostLayers = (quantity, unitCost, acquiredAt = null) => {
+  const normalisedQuantity = ensureFiniteNumber(quantity, 0)
+  if (normalisedQuantity <= EPSILON) {
+    return []
+  }
+  return [
+    {
+      quantity: normalisedQuantity,
+      unitCost: normaliseUnitCost(unitCost),
+      acquiredAt,
+    },
+  ]
+}
+
+const mergeCostLayers = (layers = []) => {
+  return layers.reduce((acc, layer) => {
+    const quantity = ensureFiniteNumber(layer.quantity, 0)
+    if (quantity <= EPSILON) {
+      return acc
+    }
+    const unitCost = normaliseUnitCost(layer.unitCost)
+    const acquiredAt = layer.acquiredAt || null
+    const previous = acc[acc.length - 1]
+    if (
+      previous &&
+      Math.abs(previous.unitCost - unitCost) <= EPSILON &&
+      ((previous.acquiredAt && acquiredAt && previous.acquiredAt === acquiredAt) ||
+        !previous.acquiredAt ||
+        !acquiredAt)
+    ) {
+      previous.quantity += quantity
+      return acc
+    }
+    acc.push({
+      quantity,
+      unitCost,
+      acquiredAt,
+    })
+    return acc
+  }, [])
+}
+
+const calculateLayersQuantity = (layers = []) =>
+  layers.reduce((acc, layer) => acc + ensureFiniteNumber(layer.quantity, 0), 0)
+
+const calculateLayersValue = (layers = []) =>
+  layers.reduce(
+    (acc, layer) =>
+      acc + ensureFiniteNumber(layer.quantity, 0) * normaliseUnitCost(layer.unitCost),
+    0,
+  )
+
+const computeCostMovement = ({
+  layers = [],
+  sold = 0,
+  received = 0,
+  unitCost = 0,
+  timestamp = null,
+}) => {
+  const workingLayers = layers
+    .map((layer) => ({
+      quantity: ensureFiniteNumber(layer.quantity, 0),
+      unitCost: normaliseUnitCost(layer.unitCost),
+      acquiredAt: layer.acquiredAt || null,
+    }))
+    .filter((layer) => layer.quantity > EPSILON)
+
+  let remainingSold = Math.max(0, ensureFiniteNumber(sold, 0))
+  let soldValue = 0
+  const remainderLayers = []
+
+  workingLayers.forEach((layer) => {
+    if (remainingSold <= EPSILON) {
+      remainderLayers.push({ ...layer })
+      return
+    }
+    const consume = Math.min(layer.quantity, remainingSold)
+    if (consume > EPSILON) {
+      soldValue += consume * layer.unitCost
+      remainingSold -= consume
+    }
+    const leftover = layer.quantity - consume
+    if (leftover > EPSILON) {
+      remainderLayers.push({
+        quantity: leftover,
+        unitCost: layer.unitCost,
+        acquiredAt: layer.acquiredAt,
+      })
+    }
+  })
+
+  if (remainingSold > EPSILON) {
+    const fallbackCost = remainderLayers.length
+      ? remainderLayers[remainderLayers.length - 1].unitCost
+      : normaliseUnitCost(unitCost)
+    soldValue += remainingSold * fallbackCost
+    remainingSold = 0
+  }
+
+  const receivedQuantity = Math.max(0, ensureFiniteNumber(received, 0))
+  const receivedUnitCost = normaliseUnitCost(unitCost)
+  let receivedValue = 0
+  if (receivedQuantity > EPSILON) {
+    receivedValue = receivedQuantity * receivedUnitCost
+    remainderLayers.push({
+      quantity: receivedQuantity,
+      unitCost: receivedUnitCost,
+      acquiredAt: timestamp,
+    })
+  }
+
+  const mergedLayers = mergeCostLayers(remainderLayers)
+  const totalQuantity = calculateLayersQuantity(mergedLayers)
+  const soldUnitCost = sold > EPSILON ? soldValue / sold : 0
+
+  return {
+    layers: mergedLayers,
+    totalQuantity,
+    soldValue,
+    soldUnitCost,
+    receivedValue,
+    receivedUnitCost: receivedQuantity > EPSILON ? receivedUnitCost : 0,
+  }
+}
+
+const summariseCostImpact = (item, sold, received, timestamp = null) =>
+  computeCostMovement({
+    layers: item?.costLayers ?? [],
+    sold,
+    received,
+    unitCost: item?.unitCost ?? 0,
+    timestamp,
+  })
+
 const normaliseManualString = (value) => {
   if (value === null || value === undefined) {
     return ''
@@ -43,11 +194,35 @@ const computeNextSkuNumber = (items, fallback = 1) => {
   return max + 1
 }
 
-const buildHistoryEntry = (item, sold, received, nextCount, timestamp, meta) => {
+const buildHistoryEntry = (
+  item,
+  sold,
+  received,
+  nextCount,
+  timestamp,
+  meta,
+  costSummary = {},
+) => {
   const delta = nextCount - item.currentCount
   if (delta === 0 && sold === 0 && received === 0) {
     return null
   }
+  const soldValue = ensureFiniteNumber(
+    costSummary.soldValue,
+    sold * normaliseUnitCost(item.unitCost),
+  )
+  const receivedValue = ensureFiniteNumber(
+    costSummary.receivedValue,
+    received * normaliseUnitCost(item.unitCost),
+  )
+  const soldUnitCost = sold > EPSILON ? soldValue / sold : 0
+  const receivedUnitCost =
+    received > EPSILON ? receivedValue / received : costSummary.receivedUnitCost ?? 0
+  const valueImpact = receivedValue - soldValue
+  const unitCost =
+    delta !== 0
+      ? valueImpact / delta
+      : costSummary.receivedUnitCost || costSummary.soldUnitCost || item.unitCost
   return {
     id: `${item.id}-${timestamp}`,
     itemId: item.id,
@@ -59,7 +234,12 @@ const buildHistoryEntry = (item, sold, received, nextCount, timestamp, meta) => 
     sold,
     received,
     delta,
-    unitCost: item.unitCost,
+    unitCost,
+    soldValue,
+    receivedValue,
+    soldUnitCost,
+    receivedUnitCost,
+    valueImpact,
     performedBy: meta?.performedBy || '',
     notes: meta?.notes || '',
     timestamp,
@@ -77,13 +257,7 @@ const parseAdjustment = (value) => {
 export const useInventory = () => {
   const [inventory, setInventory] = useState([])
   const [history, setHistory] = useState([])
-  const [metadata, setMetadata] = useState({
-    sourceFileName: '',
-    lastImportedAt: null,
-    lastStocktakeAt: null,
-    sheetName: null,
-    nextSkuNumber: 1,
-  })
+  const [metadata, setMetadata] = useState(INITIAL_METADATA)
   const [error, setError] = useState(null)
   const [isLoading, setIsLoading] = useState(false)
 
@@ -92,18 +266,86 @@ export const useInventory = () => {
     setError(null)
     try {
       const buffer = await file.arrayBuffer()
-      const { inventory: parsedInventory, workbookMeta } = parseInventoryWorkbook(buffer)
-      setInventory(parsedInventory)
-      setHistory([])
-      setMetadata((prev) => ({
-        ...prev,
+      const {
+        inventory: parsedInventory,
+        history: parsedHistory = [],
+        workbookMeta,
+      } = parseInventoryWorkbook(buffer)
+
+      const normalisedInventory = parsedInventory.map((item) => {
+        const currentCount = Number.isFinite(item.currentCount) ? item.currentCount : 0
+        const unitCost = normaliseUnitCost(item.unitCost)
+        const lastCount = Number.isFinite(item.lastCount) ? item.lastCount : currentCount
+        const layerSourceTimestamp =
+          item.lastUpdated || workbookMeta.lastStocktakeAt || workbookMeta.importedAt || null
+        const initialLayers =
+          Array.isArray(item.costLayers) && item.costLayers.length
+            ? mergeCostLayers(item.costLayers)
+            : createInitialCostLayers(currentCount, unitCost, layerSourceTimestamp)
+        const layerQuantity = calculateLayersQuantity(initialLayers)
+        const costLayers =
+          Math.abs(layerQuantity - currentCount) > EPSILON
+            ? createInitialCostLayers(currentCount, unitCost, layerSourceTimestamp)
+            : initialLayers
+        return {
+          ...item,
+          currentCount,
+          lastCount,
+          unitCost,
+          costLayers,
+          draftSold: '',
+          draftReceived: '',
+        }
+      })
+      const normalisedHistory = parsedHistory.map((entry) => {
+        const sold = ensureFiniteNumber(entry.sold, 0)
+        const received = ensureFiniteNumber(entry.received, 0)
+        const unitCost = normaliseUnitCost(entry.unitCost)
+        const soldValue =
+          entry.soldValue !== undefined
+            ? ensureFiniteNumber(entry.soldValue, sold * unitCost)
+            : sold * unitCost
+        const receivedValue =
+          entry.receivedValue !== undefined
+            ? ensureFiniteNumber(entry.receivedValue, received * unitCost)
+            : received * unitCost
+        const soldUnitCost =
+          entry.soldUnitCost !== undefined
+            ? ensureFiniteNumber(entry.soldUnitCost, sold > EPSILON ? soldValue / sold : 0)
+            : sold > EPSILON
+              ? soldValue / sold
+              : 0
+        const receivedUnitCost =
+          entry.receivedUnitCost !== undefined
+            ? ensureFiniteNumber(entry.receivedUnitCost, received > EPSILON ? receivedValue / received : 0)
+            : received > EPSILON
+              ? receivedValue / received
+              : 0
+        const valueImpact =
+          entry.valueImpact !== undefined
+            ? ensureFiniteNumber(entry.valueImpact, receivedValue - soldValue)
+            : receivedValue - soldValue
+        return {
+          ...entry,
+          soldValue,
+          receivedValue,
+          soldUnitCost,
+          receivedUnitCost,
+          valueImpact,
+        }
+      })
+
+      setInventory(normalisedInventory)
+      setHistory(normalisedHistory)
+      setMetadata({
+        ...INITIAL_METADATA,
         sourceFileName: file.name,
         sheetName: workbookMeta.sheetName,
         lastImportedAt: workbookMeta.importedAt,
-        lastStocktakeAt: null,
-        nextSkuNumber: computeNextSkuNumber(parsedInventory),
-      }))
-      return parsedInventory.length
+        lastStocktakeAt: workbookMeta.lastStocktakeAt ?? (normalisedHistory[0]?.timestamp ?? null),
+        nextSkuNumber: computeNextSkuNumber(normalisedInventory),
+      })
+      return normalisedInventory.length
     } catch (err) {
       setError(err)
       throw err
@@ -128,6 +370,22 @@ export const useInventory = () => {
     )
   }, [])
 
+  const previewDraftImpact = useCallback((item) => {
+    if (!item) {
+      return {
+        layers: item?.costLayers ?? [],
+        totalQuantity: calculateLayersQuantity(item?.costLayers ?? []),
+        soldValue: 0,
+        soldUnitCost: 0,
+        receivedValue: 0,
+        receivedUnitCost: 0,
+      }
+    }
+    const sold = parseAdjustment(item.draftSold)
+    const received = parseAdjustment(item.draftReceived)
+    return summariseCostImpact(item, sold, received)
+  }, [])
+
   const resetDrafts = useCallback(() => {
     setInventory((prev) =>
       prev.map((item) => ({
@@ -139,30 +397,48 @@ export const useInventory = () => {
   }, [])
 
   const applyStocktake = useCallback((meta = {}) => {
+    const operator = normaliseManualString(meta?.performedBy)
+    if (!operator) {
+      return []
+    }
+    const notes = normaliseManualString(meta?.notes)
     const timestamp = new Date().toISOString()
     let computedHistory = []
-    setInventory((prev) => {
-      const historyEntries = []
-      const nextInventory = prev.map((item) => {
-        const sold = parseAdjustment(item.draftSold)
-        const received = parseAdjustment(item.draftReceived)
-        const nextCount = item.currentCount - sold + received
-        const historyEntry = buildHistoryEntry(item, sold, received, nextCount, timestamp, meta)
-        if (historyEntry) {
-          historyEntries.push(historyEntry)
-        }
-        return {
-          ...item,
-          lastCount: item.currentCount,
-          currentCount: nextCount,
-          draftSold: '',
-          draftReceived: '',
-          lastUpdated: historyEntry ? timestamp : item.lastUpdated,
-        }
+      setInventory((prev) => {
+        const historyEntries = []
+        const nextInventory = prev.map((item) => {
+          const sold = parseAdjustment(item.draftSold)
+          const received = parseAdjustment(item.draftReceived)
+          const costSummary = summariseCostImpact(item, sold, received, timestamp)
+          const nextCount = costSummary.totalQuantity
+          const historyEntry = buildHistoryEntry(
+            item,
+            sold,
+            received,
+            nextCount,
+            timestamp,
+            {
+              performedBy: operator,
+              notes,
+            },
+            costSummary,
+          )
+          if (historyEntry) {
+            historyEntries.push(historyEntry)
+          }
+          return {
+            ...item,
+            lastCount: item.currentCount,
+            currentCount: nextCount,
+            draftSold: '',
+            draftReceived: '',
+            lastUpdated: historyEntry ? timestamp : item.lastUpdated,
+            costLayers: costSummary.layers,
+          }
+        })
+        computedHistory = historyEntries
+        return nextInventory
       })
-      computedHistory = historyEntries
-      return nextInventory
-    })
     if (computedHistory.length) {
       setHistory((prev) => [...computedHistory, ...prev])
       setMetadata((prev) => ({ ...prev, lastStocktakeAt: timestamp }))
@@ -170,16 +446,26 @@ export const useInventory = () => {
     return computedHistory
   }, [])
 
+  const updateUnitCost = useCallback((id, rawValue) => {
+    setInventory((prev) =>
+      prev.map((item) => {
+        if (item.id !== id) {
+          return item
+        }
+        const parsed = parseNumericInput(rawValue, item.unitCost ?? 0)
+        const nextUnitCost = Math.max(0, ensureFiniteNumber(parsed, item.unitCost ?? 0))
+        return {
+          ...item,
+          unitCost: nextUnitCost,
+        }
+      }),
+    )
+  }, [])
+
   const clearInventory = useCallback(() => {
     setInventory([])
     setHistory([])
-    setMetadata({
-      sourceFileName: '',
-      lastImportedAt: null,
-      lastStocktakeAt: null,
-      sheetName: null,
-      nextSkuNumber: 1,
-    })
+    setMetadata(INITIAL_METADATA)
     setError(null)
   }, [])
 
@@ -191,6 +477,9 @@ export const useInventory = () => {
     const category = normaliseManualString(partial.category) || 'Uncategorised'
     const unitCost = parseNumericInput(partial.unitCost, 0)
     const currentCount = parseAdjustment(partial.currentCount)
+    const performedBy = normaliseManualString(partial.performedBy) || 'Manual entry'
+    const notes = normaliseManualString(partial.notes) || 'Added manually'
+    const initialLayers = createInitialCostLayers(currentCount, unitCost, timestamp)
     const newItem = {
       id: `${sku}-${Math.random().toString(36).slice(2, 8)}`,
       sku,
@@ -202,6 +491,7 @@ export const useInventory = () => {
       draftSold: '',
       draftReceived: '',
       lastUpdated: timestamp,
+      costLayers: initialLayers,
     }
     setInventory((prev) => [newItem, ...prev])
     setHistory((prev) => [
@@ -217,8 +507,13 @@ export const useInventory = () => {
         received: newItem.currentCount,
         delta: newItem.currentCount,
         unitCost: newItem.unitCost,
-        performedBy: partial.performedBy || 'Manual entry',
-        notes: partial.notes || 'Added manually',
+        soldValue: 0,
+        receivedValue: newItem.currentCount * newItem.unitCost,
+        soldUnitCost: 0,
+        receivedUnitCost: newItem.unitCost,
+        valueImpact: newItem.currentCount * newItem.unitCost,
+        performedBy,
+        notes,
         timestamp,
       },
       ...prev,
@@ -249,7 +544,8 @@ export const useInventory = () => {
         acc.items += 1
         acc.sold += sold
         acc.received += received
-        acc.value += (received - sold) * item.unitCost
+        const costPreview = summariseCostImpact(item, sold, received)
+        acc.value += costPreview.receivedValue - costPreview.soldValue
         return acc
       },
       { items: 0, sold: 0, received: 0, value: 0 },
@@ -260,7 +556,10 @@ export const useInventory = () => {
     const totalSkus = inventory.length
     const totalCurrent = inventory.reduce((acc, item) => acc + item.currentCount, 0)
     const totalLast = inventory.reduce((acc, item) => acc + item.lastCount, 0)
-    const totalValue = inventory.reduce((acc, item) => acc + item.currentCount * item.unitCost, 0)
+    const totalValue = inventory.reduce(
+      (acc, item) => acc + calculateLayersValue(item.costLayers ?? []),
+      0,
+    )
     return {
       totalSkus,
       totalCurrent,
@@ -304,6 +603,8 @@ export const useInventory = () => {
     error,
     loadFromFile,
     updateDraftAdjustment,
+    updateUnitCost,
+    previewDraftImpact,
     resetDrafts,
     applyStocktake,
     clearInventory,
@@ -313,3 +614,5 @@ export const useInventory = () => {
     exportWorkbookBytes,
   }
 }
+
+
