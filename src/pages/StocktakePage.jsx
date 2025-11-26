@@ -1,5 +1,5 @@
 ﻿import { Search } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { Button } from '../components/Button.jsx'
 import { EmptyState } from '../components/EmptyState.jsx'
 import { MetricCard } from '../components/MetricCard.jsx'
@@ -12,6 +12,12 @@ import {
   formatDelta,
   formatNumber,
 } from '../utils/format.js'
+
+const buildTimestampSuffix = () => {
+  const now = new Date()
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+}
 
 const nextSkuPreview = (number) => {
   const count = number ?? 1
@@ -130,8 +136,10 @@ export const StocktakePage = ({
   hasInventory,
   hasImported,
   hasDrafts,
+  history,
   updateDraftAdjustment,
   updateUnitCost,
+  updateItemNote,
   previewDraftImpact,
   resetDrafts,
   applyStocktake,
@@ -147,6 +155,8 @@ export const StocktakePage = ({
   const [notes, setNotes] = useState('')
   const [status, setStatus] = useState('')
   const [manualStatus, setManualStatus] = useState('')
+  const [noteModal, setNoteModal] = useState({ item: null, value: '' })
+  const applySectionRef = useRef(null)
 
   const categories = useMemo(() => {
     const unique = new Set(inventory.map((item) => item.category).filter(Boolean))
@@ -165,26 +175,30 @@ export const StocktakePage = ({
     })
   }, [inventory, search, categoryFilter])
 
-  const handleExport = () => {
-    const bytes = exportWorkbookBytes()
-    const fileName = metadata?.sourceFileName
-      ? metadata.sourceFileName.replace(/\.xlsx?$/i, '')
-      : 'stocktake-control'
-    triggerWorkbookDownload(bytes, `${fileName}-updated.xlsx`)
-    setStatus('Generated the latest workbook, including movement history and summary tabs.')
+  const scrollToApply = () => {
+    if (applySectionRef.current) {
+      applySectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
   }
 
   const handleApply = () => {
     if (!performedBy.trim()) {
-      setStatus('Enter the name of the person responsible before committing the stocktake.')
+      setStatus('Enter the name of the person responsible before updating the stocktake.')
+      scrollToApply()
       return
     }
     const historyEntries = applyStocktake({ performedBy: performedBy.trim(), notes })
-    if (historyEntries.length) {
-      setStatus(`Recorded ${historyEntries.length} adjustments.`)
-    } else {
-      setStatus('No adjustments were detected. Capture sold or received units before committing.')
-    }
+    const updatedHistory = historyEntries.length ? [...historyEntries, ...history] : history
+    const bytes = exportWorkbookBytes({ history: updatedHistory })
+    const baseName = metadata?.sourceFileName
+      ? metadata.sourceFileName.replace(/\.xlsx?$/i, '')
+      : 'stocktake-control'
+    const stampedName = `${baseName}-updated-${buildTimestampSuffix()}.xlsx`
+    triggerWorkbookDownload(bytes, stampedName)
+    const recordedMessage = historyEntries.length
+      ? `Recorded ${historyEntries.length} adjustments`
+      : 'Applied without new adjustments'
+    setStatus(`${recordedMessage} and exported the latest workbook (inventory, history, summary).`)
     setPerformedBy('')
     setNotes('')
   }
@@ -193,6 +207,19 @@ export const StocktakePage = ({
     const newItem = addManualItem(form)
     setManualStatus(`Registered ${newItem.name} (${newItem.sku}) in the inventory register.`)
     setStatus('')
+  }
+
+  const openNoteModal = (item) => {
+    setNoteModal({ item, value: item.itemNote ?? '' })
+  }
+
+  const closeNoteModal = () => setNoteModal({ item: null, value: '' })
+
+  const saveNote = () => {
+    if (noteModal.item) {
+      updateItemNote(noteModal.item.id, noteModal.value)
+    }
+    closeNoteModal()
   }
 
   const netUnits = draftSummary.received - draftSummary.sold
@@ -220,11 +247,8 @@ export const StocktakePage = ({
             <Button variant="ghost" onClick={resetDrafts}>
               Clear entries
             </Button>
-            <Button variant="primary" onClick={handleApply} disabled={!hasDrafts || !performedBy.trim()}>
-              Commit updates
-            </Button>
-            <Button variant="secondary" onClick={handleExport}>
-              Export workbook
+            <Button variant="primary" onClick={handleApply}>
+              Confirm & export
             </Button>
           </div>
         }
@@ -253,11 +277,18 @@ export const StocktakePage = ({
         />
       </section>
 
+      <section className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-slate-900">Register a new item</h2>
+          {manualStatus ? (
+            <p className="text-xs text-emerald-600">{manualStatus}</p>
+          ) : null}
+        </div>
+        <ManualItemForm onSubmit={handleManualAdd} nextSku={nextSkuPreview(metadata?.nextSkuNumber)} />
+      </section>
+
       {draftBanner ? (
         <p className="rounded-2xl border border-indigo-200 bg-indigo-50 px-6 py-3 text-sm text-indigo-700">{draftBanner}</p>
-      ) : null}
-      {status ? (
-        <p className="rounded-2xl border border-slate-200 bg-white px-6 py-3 text-sm text-slate-600">{status}</p>
       ) : null}
 
       <section className="space-y-4 rounded-3xl border border-slate-200 bg-white/70 p-6 shadow-sm backdrop-blur">
@@ -296,18 +327,18 @@ export const StocktakePage = ({
           </div>
         </div>
 
-        <div className="overflow-hidden rounded-2xl border border-slate-200">
-          <table className="min-w-full divide-y divide-slate-200 text-sm">
+        <div className="overflow-x-auto rounded-2xl border border-slate-200">
+          <table className="min-w-[1000px] divide-y divide-slate-200 text-sm">
             <thead className="bg-slate-50 text-xs uppercase tracking-[0.2em] text-slate-500">
               <tr>
-                <th className="px-4 py-3 text-left">Item</th>
-                <th className="px-4 py-3 text-left">Current</th>
-                <th className="px-4 py-3 text-left">Unit cost</th>
-                <th className="px-4 py-3 text-left">Sold</th>
-                <th className="px-4 py-3 text-left">Received</th>
-                <th className="px-4 py-3 text-left">Variance (units)</th>
-                <th className="px-4 py-3 text-left">Value impact</th>
-                <th className="px-4 py-3 text-left">Last updated</th>
+                <th className="px-3 py-2 text-left">Item</th>
+                <th className="px-3 py-2 text-left">Current</th>
+                <th className="px-3 py-2 text-left">Unit cost</th>
+                <th className="px-3 py-2 text-left">Sold</th>
+                <th className="px-3 py-2 text-left">Received</th>
+                <th className="px-3 py-2 text-left">Variance (units)</th>
+                <th className="px-3 py-2 text-left">Value impact</th>
+                <th className="px-3 py-2 text-left">Item notes</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 bg-white">
@@ -334,18 +365,18 @@ export const StocktakePage = ({
                   const averageCost =
                     layerQuantity > 0 ? layerValue / layerQuantity : item.unitCost ?? 0
 
-                  return (
-                    <tr key={item.id} className="transition hover:bg-indigo-50/40">
-                      <td className="px-4 py-3">
-                        <div className="space-y-1">
-                          <p className="font-medium text-slate-800">{item.name}</p>
+          return (
+            <tr key={item.id} className="transition hover:bg-indigo-50/40">
+              <td className="px-3 py-2">
+                <div className="space-y-1">
+                  <p className="font-medium text-slate-800">{item.name}</p>
                           <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                            {item.sku || 'No SKU'} | {item.category || 'Uncategorised'}
+                            {item.sku || 'No SKU'} <br/> {item.category || 'Uncategorised'}
                           </p>
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-slate-600">{formatNumber(item.currentCount)}</td>
-                      <td className="px-4 py-3">
+                      <td className="px-3 py-2 text-slate-600">{formatNumber(item.currentCount)}</td>
+                      <td className="px-3 py-2">
                         <div className="space-y-1">
                           <input
                             value={item.unitCost ?? ''}
@@ -354,13 +385,13 @@ export const StocktakePage = ({
                             min="0"
                             step="any"
                             inputMode="decimal"
-                            className="w-32 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                            className="w-30 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
                             placeholder="0.00"
                           />
                       
                         </div>
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-3 py-2">
                         <input
                           value={item.draftSold}
                           onChange={(event) => updateDraftAdjustment(item.id, 'draftSold', event.target.value)}
@@ -370,7 +401,7 @@ export const StocktakePage = ({
                           placeholder="0"
                         />
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-3 py-2">
                         <input
                           value={item.draftReceived}
                           onChange={(event) => updateDraftAdjustment(item.id, 'draftReceived', event.target.value)}
@@ -381,20 +412,29 @@ export const StocktakePage = ({
                         />
                       </td>
                       <td
-                        className={`px-4 py-3 font-semibold ${
+                        className={`px-3 py-2 font-semibold ${
                           delta > 0 ? 'text-emerald-600' : delta < 0 ? 'text-rose-500' : 'text-slate-500'
                         }`}
                       >
                         {formatDelta(delta, { showZero: true })}
-                      </td>
-                      <td
-                        className={`px-4 py-3 font-medium ${
-                          valueImpact > 0 ? 'text-emerald-600' : valueImpact < 0 ? 'text-rose-500' : 'text-slate-500'
-                        }`}
+                </td>
+                <td
+                  className={`px-3 py-2 font-medium ${
+                    valueImpact > 0 ? 'text-emerald-600' : valueImpact < 0 ? 'text-rose-500' : 'text-slate-500'
+                  }`}
                       >
                         {formatDelta(valueImpact, { currency: true, showZero: true })}
                       </td>
-                      <td className="px-4 py-3 text-xs text-slate-500">{formatDate(item.lastUpdated)}</td>
+                      <td className="px-3 py-2">
+                        <button
+                          type="button"
+                          onClick={() => openNoteModal(item)}
+                          className="w-24 truncate rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
+                          title={item.itemNote || 'Add note'}
+                        >
+                          {item.itemNote ? item.itemNote : 'Add note'}
+                        </button>
+                      </td>
                     </tr>
                   )
                 })}
@@ -410,7 +450,52 @@ export const StocktakePage = ({
         </div>
       </section>
 
-      <section className="space-y-4 rounded-3xl border border-slate-200 bg-white/60 p-6 shadow-sm backdrop-blur">
+      {noteModal.item ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md px-4">
+          <div className="w-full max-w-xl rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="mb-4 flex items-start justify-between">
+              <div className="space-y-1">
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Item</p>
+                <p className="text-sm font-semibold text-slate-800">{noteModal.item.name}</p>
+                <p className="text-xs text-slate-500">{noteModal.item.sku || 'No SKU'}</p>
+                <p className="text-[11px] text-slate-400">
+                  Last updated: {noteModal.item.lastUpdated ? formatDate(noteModal.item.lastUpdated) : '—'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeNoteModal}
+                className="text-sm font-semibold text-slate-500 hover:text-slate-700"
+              >
+                Close
+              </button>
+            </div>
+            <label className="block space-y-2 text-sm">
+              <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Item note</span>
+              <textarea
+                value={noteModal.value}
+                onChange={(event) => setNoteModal((prev) => ({ ...prev, value: event.target.value }))}
+                rows={5}
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                placeholder="Add context for this item"
+              />
+            </label>
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="ghost" onClick={closeNoteModal}>
+                Cancel
+              </Button>
+              <Button variant="primary" onClick={saveNote}>
+                Save note
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <section
+        ref={applySectionRef}
+        className="space-y-4 rounded-3xl border border-slate-200 bg-white/60 p-6 shadow-sm backdrop-blur"
+      >
         <h2 className="text-lg font-semibold text-slate-900">Apply adjustments</h2>
         <div className="grid gap-4 md:grid-cols-2">
           <label className="space-y-2 text-sm">
@@ -433,8 +518,8 @@ export const StocktakePage = ({
           </label>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="primary" onClick={handleApply} disabled={!hasDrafts || !performedBy.trim()}>
-            Commit stocktake
+          <Button variant="primary" onClick={handleApply}>
+            Confirm stocktake & export
           </Button>
           <Button variant="ghost" onClick={resetDrafts}>
             Clear entries
@@ -445,15 +530,9 @@ export const StocktakePage = ({
         </p>
       </section>
 
-      <section className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-slate-900">Register a new item</h2>
-          {manualStatus ? (
-            <p className="text-xs text-emerald-600">{manualStatus}</p>
-          ) : null}
-        </div>
-        <ManualItemForm onSubmit={handleManualAdd} nextSku={nextSkuPreview(metadata?.nextSkuNumber)} />
-      </section>
+      {status ? (
+        <p className="rounded-2xl border border-slate-200 bg-white px-6 py-3 text-sm text-slate-600">{status}</p>
+      ) : null}
     </div>
   )
 }

@@ -30,6 +30,10 @@ export const REQUIRED_COLUMNS = {
   lastUpdated: 'Last Updated',
 }
 
+export const OPTIONAL_COLUMNS = {
+  itemNote: 'Notes',
+}
+
 export const TEMPLATE_HEADERS = [
   'SKU',
   'Item',

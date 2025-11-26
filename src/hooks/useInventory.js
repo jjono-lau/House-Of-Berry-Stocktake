@@ -3,6 +3,7 @@ import {
   AUTO_SKU_PAD_LENGTH,
   AUTO_SKU_PREFIX,
   MOVEMENT_WINDOW_DAYS,
+  OPTIONAL_COLUMNS,
 } from '../constants.js'
 import {
   createBlankTemplateWorkbook,
@@ -242,6 +243,7 @@ const buildHistoryEntry = (
     valueImpact,
     performedBy: meta?.performedBy || '',
     notes: meta?.notes || '',
+    itemNote: item?.itemNote || '',
     timestamp,
   }
 }
@@ -276,6 +278,9 @@ export const useInventory = () => {
         const currentCount = Number.isFinite(item.currentCount) ? item.currentCount : 0
         const unitCost = normaliseUnitCost(item.unitCost)
         const lastCount = Number.isFinite(item.lastCount) ? item.lastCount : currentCount
+        const itemNote = normaliseManualString(
+          item.itemNote || item.note || item[OPTIONAL_COLUMNS.itemNote] || '',
+        )
         const layerSourceTimestamp =
           item.lastUpdated || workbookMeta.lastStocktakeAt || workbookMeta.importedAt || null
         const initialLayers =
@@ -295,6 +300,7 @@ export const useInventory = () => {
           costLayers,
           draftSold: '',
           draftReceived: '',
+          itemNote,
         }
       })
       const normalisedHistory = parsedHistory.map((entry) => {
@@ -437,13 +443,38 @@ export const useInventory = () => {
           }
         })
         computedHistory = historyEntries
-        return nextInventory
+          return nextInventory
       })
-    if (computedHistory.length) {
-      setHistory((prev) => [...computedHistory, ...prev])
-      setMetadata((prev) => ({ ...prev, lastStocktakeAt: timestamp }))
+    let historyToAdd = computedHistory
+    if (!computedHistory.length) {
+      historyToAdd = inventory
+        .filter((item) => (item.lastCount ?? 0) === 0 && item.currentCount > 0)
+        .map((item) => ({
+          id: `${item.id}-${timestamp}-new`,
+          itemId: item.id,
+          sku: item.sku,
+          name: item.name,
+          category: item.category,
+          previousCount: 0,
+          newCount: item.currentCount,
+          sold: 0,
+          received: item.currentCount,
+          delta: item.currentCount,
+          unitCost: item.unitCost,
+          soldValue: 0,
+          receivedValue: item.currentCount * item.unitCost,
+          soldUnitCost: 0,
+          receivedUnitCost: item.unitCost,
+          valueImpact: item.currentCount * item.unitCost,
+          performedBy: operator,
+          notes: notes || 'New item',
+          itemNote: item.itemNote || '',
+          timestamp,
+        }))
     }
-    return computedHistory
+    setHistory((prev) => [...historyToAdd, ...prev])
+    setMetadata((prev) => ({ ...prev, lastStocktakeAt: timestamp }))
+    return historyToAdd
   }, [])
 
   const updateUnitCost = useCallback((id, rawValue) => {
@@ -459,6 +490,19 @@ export const useInventory = () => {
           unitCost: nextUnitCost,
         }
       }),
+    )
+  }, [])
+
+  const updateItemNote = useCallback((id, rawValue) => {
+    setInventory((prev) =>
+      prev.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              itemNote: normaliseManualString(rawValue),
+            }
+          : item,
+      ),
     )
   }, [])
 
@@ -478,7 +522,7 @@ export const useInventory = () => {
     const unitCost = parseNumericInput(partial.unitCost, 0)
     const currentCount = parseAdjustment(partial.currentCount)
     const performedBy = normaliseManualString(partial.performedBy) || 'Manual entry'
-    const notes = normaliseManualString(partial.notes) || 'Added manually'
+    const notes = normaliseManualString(partial.notes)
     const initialLayers = createInitialCostLayers(currentCount, unitCost, timestamp)
     const newItem = {
       id: `${sku}-${Math.random().toString(36).slice(2, 8)}`,
@@ -492,6 +536,7 @@ export const useInventory = () => {
       draftReceived: '',
       lastUpdated: timestamp,
       costLayers: initialLayers,
+      itemNote: notes,
     }
     setInventory((prev) => [newItem, ...prev])
     setHistory((prev) => [
@@ -585,7 +630,12 @@ export const useInventory = () => {
   const generateTemplateBytes = useCallback(() => createTemplateWorkbook(), [])
 
   const exportWorkbookBytes = useCallback(
-    () => createUpdatedWorkbook(inventory, metadata, history),
+    (overrides = {}) => {
+      const nextInventory = overrides.inventory ?? inventory
+      const nextMetadata = overrides.metadata ?? metadata
+      const nextHistory = overrides.history ?? history
+      return createUpdatedWorkbook(nextInventory, nextMetadata, nextHistory)
+    },
     [inventory, metadata, history],
   )
 
@@ -604,6 +654,7 @@ export const useInventory = () => {
     loadFromFile,
     updateDraftAdjustment,
     updateUnitCost,
+    updateItemNote,
     previewDraftImpact,
     resetDrafts,
     applyStocktake,

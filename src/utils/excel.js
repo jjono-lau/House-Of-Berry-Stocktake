@@ -7,6 +7,7 @@ import {
   TEMPLATE_HEADERS,
   REQUIRED_COLUMNS,
   SUMMARY_SHEET_NAME,
+  OPTIONAL_COLUMNS,
 } from '../constants.js'
 
 const normaliseString = (value) => {
@@ -39,6 +40,7 @@ const MOVEMENT_HEADERS = [
   'Value Change',
   'Performed By',
   'Notes',
+  'Item Note',
   'Timestamp',
 ]
 
@@ -139,6 +141,7 @@ export const parseInventoryWorkbook = (arrayBuffer) => {
       draftSold: '',
       draftReceived: '',
       lastUpdated: toIsoTimestamp(row[REQUIRED_COLUMNS.lastUpdated]),
+      itemNote: normaliseString(row[OPTIONAL_COLUMNS.itemNote]),
     }
   })
   let history = []
@@ -167,6 +170,7 @@ export const parseInventoryWorkbook = (arrayBuffer) => {
         const rawValueChange = parseCurrency(row['Value Change'])
         const performedBy = normaliseString(row['Performed By'])
         const notes = normaliseString(row.Notes)
+        const itemNote = normaliseString(row['Item Note'])
         const timestamp = toIsoTimestamp(row.Timestamp)
         const soldValue = sold * unitCost
         const receivedValue = received * unitCost
@@ -195,6 +199,7 @@ export const parseInventoryWorkbook = (arrayBuffer) => {
           valueImpact,
           performedBy,
           notes,
+          itemNote,
           timestamp,
         }
       })
@@ -355,6 +360,7 @@ const createMovementsSheet = (history) => {
       (entry.receivedValue ?? 0) - (entry.soldValue ?? (entry.sold ?? 0) * (entry.soldUnitCost ?? entry.unitCost ?? 0)),
     'Performed By': entry.performedBy || '',
     Notes: entry.notes || '',
+    'Item Note': entry.itemNote || '',
     Timestamp: entry.timestamp ? new Date(entry.timestamp) : '',
   }))
   const worksheet = XLSX.utils.json_to_sheet(rows, {
@@ -374,6 +380,7 @@ const createMovementsSheet = (history) => {
     { wch: 16 },
     { wch: 18 },
     { wch: 28 },
+    { wch: 28 },
     { wch: 22 },
   ]
   return worksheet
@@ -388,12 +395,15 @@ export const createUpdatedWorkbook = (inventory, metadata = {}, history = []) =>
     [REQUIRED_COLUMNS.count]: item.currentCount,
     [REQUIRED_COLUMNS.unitCost]: calculateAverageLayerCost(item.costLayers ?? [], item.unitCost),
     [REQUIRED_COLUMNS.lastUpdated]: item.lastUpdated ? new Date(item.lastUpdated) : '',
+    [OPTIONAL_COLUMNS.itemNote]: item.itemNote || '',
   }))
   const requiredHeaders = Object.values(REQUIRED_COLUMNS)
+  const optionalHeaders = [OPTIONAL_COLUMNS.itemNote]
+  const headers = [...requiredHeaders, ...optionalHeaders]
   const worksheet = XLSX.utils.json_to_sheet(rows, {
-    header: requiredHeaders,
+    header: headers,
   })
-  applyRowStyles(worksheet, 0, requiredHeaders.length, HEADER_CELL_STYLE)
+  applyRowStyles(worksheet, 0, headers.length, HEADER_CELL_STYLE)
   worksheet['!cols'] = [
     { wch: 14 },
     { wch: 28 },
@@ -401,6 +411,7 @@ export const createUpdatedWorkbook = (inventory, metadata = {}, history = []) =>
     { wch: 12 },
     { wch: 14 },
     { wch: 16 },
+    { wch: 28 },
   ]
   XLSX.utils.book_append_sheet(
     workbook,
